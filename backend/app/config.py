@@ -43,8 +43,22 @@ class Settings(BaseSettings):
     cookie_name: str = "wordnest_session"
     max_image_bytes: int = 5 * 1024 * 1024
     max_image_side: int = 1600
+    max_audio_bytes: int = 8 * 1024 * 1024
     allowed_image_mimes: frozenset[str] = frozenset(
         {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    )
+    allowed_audio_mimes: frozenset[str] = frozenset(
+        {
+            "audio/aac",
+            "audio/flac",
+            "audio/mp4",
+            "audio/mpeg",
+            "audio/ogg",
+            "audio/wav",
+            "audio/webm",
+            "audio/x-m4a",
+            "audio/x-wav",
+        }
     )
 
     @field_validator("family_access_code")

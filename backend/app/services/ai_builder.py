@@ -10,7 +10,12 @@ from openai import OpenAI
 from pydantic import ValidationError
 
 from backend.app.config import Settings
-from backend.app.schemas import EnrichResult, ScanCandidate, ScanResult
+from backend.app.schemas import (
+    EnrichResult,
+    ScanCandidate,
+    ScanResult,
+    VoiceTranscriptionOut,
+)
 
 FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 
@@ -39,6 +44,26 @@ SCAN_SYSTEM = """你是小学英语阅读助手。从图片中提取适合小学
 返回严格 JSON（不要 Markdown）：{"candidates":[{"spelling":"...","meaning_zh":"可选中文"}]}。
 只提取清晰可见的英语单词，去重，最多 20 个。不要编造图片里没有的词。"""
 
+VOICE_WORD_PROMPT = """The user is dictating a short list of English vocabulary words for a child.
+Transcribe only the English word spellings that the user intends to add.
+Return lowercase words separated by commas, for example: apple, banana, beautiful.
+Ignore Chinese speech, instructions, counting, filler speech, and spoken separators such as "comma" or "next".
+Do not add translations, definitions, labels, sentences, or punctuation other than apostrophes, hyphens, and commas.
+If a word is spelled letter by letter, combine the letters into one word. Keep at most 20 unique words."""
+
+VOICE_WORD_RE = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*")
+VOICE_MIME_EXTENSIONS = {
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+    "audio/mp4": "m4a",
+    "audio/mpeg": "mp3",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/webm": "webm",
+    "audio/x-m4a": "m4a",
+    "audio/x-wav": "wav",
+}
+
 
 class AIBuilderClient(Protocol):
     def enrich_word(self, spelling: str) -> EnrichResult: ...
@@ -46,6 +71,24 @@ class AIBuilderClient(Protocol):
     def enrich_words(self, spellings: list[str]) -> list[EnrichResult]: ...
 
     def scan_image(self, data_url: str, mime: str) -> ScanResult: ...
+
+    def transcribe_words(self, audio: bytes, mime: str) -> VoiceTranscriptionOut: ...
+
+
+def normalize_voice_words(transcript: str) -> list[str]:
+    """只保留英文单词，按出现顺序转小写、去重，最多 20 个。"""
+    normalized = transcript.replace("’", "'").replace("‑", "-")
+    words: list[str] = []
+    seen: set[str] = set()
+    for match in VOICE_WORD_RE.finditer(normalized):
+        word = match.group(0).lower()
+        if word in seen:
+            continue
+        seen.add(word)
+        words.append(word)
+        if len(words) >= 20:
+            break
+    return words
 
 
 def _placeholder_enrich(spelling: str) -> EnrichResult:
@@ -237,6 +280,61 @@ class HttpAIBuilderClient:
                 detail="图片识别结果格式无效，请重试",
             ) from exc
 
+    def transcribe_words(self, audio: bytes, mime: str) -> VoiceTranscriptionOut:
+        endpoint = f"{self.settings.ai_base_url.rstrip('/')}/audio/transcriptions"
+        extension = VOICE_MIME_EXTENSIONS.get(mime, "webm")
+        try:
+            response = httpx.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {self.settings.ai_builder_token}"},
+                data={"language": "en", "prompt": VOICE_WORD_PROMPT},
+                files={
+                    "audio_file": (
+                        f"recording.{extension}",
+                        audio,
+                        mime,
+                    )
+                },
+                timeout=self.settings.ai_timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="语音识别超时，请缩短录音后重试",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="语音识别服务暂时不可用，请稍后重试或手工输入",
+            ) from exc
+
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="语音识别服务暂时不可用，请稍后重试或手工输入",
+            )
+        try:
+            payload = response.json()
+            transcript = str(payload["text"]).strip()
+            request_id = str(payload["request_id"]).strip()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="语音识别结果格式异常，请重试",
+            ) from exc
+
+        words = normalize_voice_words(transcript)
+        if not words:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="没有识别到清晰的英语单词，请靠近话筒后重试",
+            )
+        return VoiceTranscriptionOut(
+            words=words,
+            text=", ".join(words),
+            request_id=request_id,
+        )
+
 
 class MockAIBuilderClient:
     def enrich_word(self, spelling: str) -> EnrichResult:
@@ -262,6 +360,14 @@ class MockAIBuilderClient:
                 ScanCandidate(spelling="apple", meaning_zh="苹果"),
                 ScanCandidate(spelling="book", meaning_zh="书"),
             ]
+        )
+
+    def transcribe_words(self, audio: bytes, mime: str) -> VoiceTranscriptionOut:
+        del audio, mime
+        return VoiceTranscriptionOut(
+            words=["apple", "banana"],
+            text="apple, banana",
+            request_id="mock-voice-request",
         )
 
 

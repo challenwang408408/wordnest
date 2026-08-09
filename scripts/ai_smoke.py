@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import mimetypes
 import os
 import sys
 from pathlib import Path
@@ -70,6 +71,17 @@ def main() -> int:
     scan = client.scan_image(data_url, "image/png")
     print("scan candidates:", [c.model_dump() for c in scan.candidates])
     assert len(scan.candidates) >= 1
+
+    voice_path_raw = os.getenv("VOICE_SMOKE_AUDIO", "").strip()
+    if voice_path_raw:
+        voice_path = Path(voice_path_raw).expanduser()
+        if not voice_path.is_file():
+            print(f"失败：语音样本不存在：{voice_path}", file=sys.stderr)
+            return 1
+        voice_mime = mimetypes.guess_type(voice_path.name)[0] or "audio/wav"
+        voice = client.transcribe_words(voice_path.read_bytes(), voice_mime)
+        print("voice words:", voice.words, "request_id:", voice.request_id)
+        assert voice.words
     print("AI smoke 通过")
     return 0
 

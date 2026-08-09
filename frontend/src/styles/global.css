@@ -255,6 +255,86 @@ a {
   resize: vertical;
 }
 
+.voice-entry-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+}
+
+.voice-record-button {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(10, 102, 216, 0.18);
+  border-radius: 999px;
+  padding: 0 16px;
+  color: var(--hero-blue);
+  background: var(--paper);
+  font-weight: 700;
+  box-shadow: 0 5px 16px rgba(10, 102, 216, 0.08);
+}
+
+.voice-record-button:hover:not(:disabled) {
+  border-color: rgba(10, 102, 216, 0.34);
+  background: var(--hero-blue-soft);
+}
+
+.voice-record-button.is-recording {
+  border-color: rgba(217, 73, 91, 0.28);
+  color: var(--hero-red-deep);
+  background: #fff5f6;
+  box-shadow: 0 0 0 5px rgba(217, 73, 91, 0.08);
+}
+
+.voice-record-button:disabled {
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.voice-entry-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.voice-entry-copy strong {
+  font-size: 0.84rem;
+  color: var(--ink);
+}
+
+.voice-entry-copy span,
+.voice-message {
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.voice-message {
+  margin: -2px 2px 0;
+}
+
+.voice-message.is-error {
+  color: #9c2f42;
+}
+
+.spin {
+  animation: voice-spin 0.9s linear infinite;
+}
+
+@keyframes voice-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .error-banner {
   background: color-mix(in srgb, var(--coral) 16%, white);
   color: #9c2f42;
@@ -2004,6 +2084,14 @@ textarea::placeholder {
 
   .scan-upload .btn {
     grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .voice-entry-row {
+    grid-template-columns: 1fr;
+  }
+
+  .voice-record-button {
     width: 100%;
   }
 }

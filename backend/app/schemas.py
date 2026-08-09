@@ -187,6 +187,12 @@ class ScanResult(BaseModel):
     candidates: list[ScanCandidate]
 
 
+class VoiceTranscriptionOut(BaseModel):
+    words: list[str] = Field(default_factory=list, max_length=20)
+    text: str
+    request_id: str
+
+
 class QuizStartRequest(BaseModel):
     library_ids: list[int] = Field(default_factory=list)
     word_ids: list[int] = Field(default_factory=list, max_length=50)

@@ -53,6 +53,12 @@ export type ScanCandidate = {
   meaning_zh: string | null;
 };
 
+export type VoiceTranscription = {
+  words: string[];
+  text: string;
+  request_id: string;
+};
+
 export type QuizWord = {
   id: number;
   spelling: string;

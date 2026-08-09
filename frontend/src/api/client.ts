@@ -9,6 +9,7 @@ import type {
   ScanCandidate,
   SessionResponse,
   Word,
+  VoiceTranscription,
 } from "../types";
 
 const API = "/api/wordnest";
@@ -145,6 +146,24 @@ export const api = {
     return request<{ candidates: ScanCandidate[] }>(
       `/profiles/${profileId}/words/scan`,
       { method: "POST", body: form },
+    );
+  },
+  transcribeVoice: async (profileId: number, audio: Blob) => {
+    const bytes = await audio.arrayBuffer();
+    if (bytes.byteLength === 0) {
+      throw new ApiError(
+        400,
+        "录音没有生成有效音频，请用 Safari 打开后重试",
+      );
+    }
+    const mime = audio.type.split(";", 1)[0] || "application/octet-stream";
+    return request<VoiceTranscription>(
+      `/profiles/${profileId}/words/transcribe-voice`,
+      {
+        method: "POST",
+        body: bytes,
+        headers: { "Content-Type": mime },
+      },
     );
   },
   startQuiz: (

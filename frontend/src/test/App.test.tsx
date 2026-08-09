@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SyllableTrack } from "../components/SyllableTrack";
 import { BottomNav } from "../components/BottomNav";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -26,6 +26,7 @@ const rateQuizMock = vi.fn();
 const librariesMock = vi.fn();
 const profilesMock = vi.fn();
 const scanMock = vi.fn();
+const transcribeVoiceMock = vi.fn();
 const loginMock = vi.fn();
 const dashboardMock = vi.fn();
 const quizPreviewMock = vi.fn();
@@ -46,6 +47,7 @@ vi.mock("../api/client", () => ({
     startQuiz: (...args: unknown[]) => startQuizMock(...args),
     rateQuiz: (...args: unknown[]) => rateQuizMock(...args),
     scan: (...args: unknown[]) => scanMock(...args),
+    transcribeVoice: (...args: unknown[]) => transcribeVoiceMock(...args),
     login: (...args: unknown[]) => loginMock(...args),
     dashboard: (...args: unknown[]) => dashboardMock(...args),
     quizPreview: (...args: unknown[]) => quizPreviewMock(...args),
@@ -63,6 +65,19 @@ vi.mock("../api/client", () => ({
     }
   },
 }));
+
+const originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+  navigator,
+  "mediaDevices",
+);
+
+afterEach(() => {
+  if (originalMediaDevicesDescriptor) {
+    Object.defineProperty(navigator, "mediaDevices", originalMediaDevicesDescriptor);
+  } else {
+    Reflect.deleteProperty(navigator, "mediaDevices");
+  }
+});
 
 function wrap(
   ui: React.ReactNode,
@@ -212,6 +227,11 @@ beforeEach(() => {
   });
   scanMock.mockResolvedValue({
     candidates: [{ spelling: "apple", meaning_zh: null }],
+  });
+  transcribeVoiceMock.mockResolvedValue({
+    words: ["apple", "banana"],
+    text: "apple, banana",
+    request_id: "mock-voice-request",
   });
   loginMock.mockResolvedValue({ authenticated: true });
   dashboardMock.mockResolvedValue({
@@ -545,6 +565,97 @@ describe("AddWordPage", () => {
       ]);
     });
     expect(await screen.findByText("words-list")).toBeInTheDocument();
+  });
+
+  it("records English words and merges comma-separated results into the input", async () => {
+    let trackWasStopped = false;
+    let startTimeslice: number | undefined;
+
+    class MockMediaRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+
+      state: "inactive" | "recording" = "inactive";
+      mimeType: string;
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+        this.mimeType = options?.mimeType ?? "audio/webm";
+      }
+
+      start(timeslice?: number) {
+        startTimeslice = timeslice;
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        queueMicrotask(() => {
+          this.ondataavailable?.({
+            data: new Blob([trackWasStopped ? "" : "recorded-audio"], {
+              type: this.mimeType,
+            }),
+          } as BlobEvent);
+          this.onstop?.(new Event("stop"));
+        });
+      }
+    }
+
+    const stopTrack = vi.fn(() => {
+      trackWasStopped = true;
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getTracks: () => [{ stop: stopTrack }],
+        }),
+      },
+    });
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+
+    const user = userEvent.setup();
+    wrap(<AddWordPage />, "/app/1/add");
+    const input = await screen.findByLabelText("英语单词");
+    await user.type(input, "beautiful");
+    await user.click(screen.getByRole("button", { name: "开始语音录词" }));
+    expect(await screen.findByRole("button", { name: "停止录音" })).toBeEnabled();
+    expect(startTimeslice).toBeUndefined();
+    await user.click(screen.getByRole("button", { name: "停止录音" }));
+
+    await waitFor(() => {
+      expect(transcribeVoiceMock).toHaveBeenCalledWith(1, expect.any(Blob));
+      expect(input).toHaveValue("beautiful, apple, banana");
+      expect(stopTrack).toHaveBeenCalled();
+    });
+    expect(await screen.findByText("已识别 2 个单词，请核对后统一补全")).toBeInTheDocument();
+  });
+
+  it("shows an actionable message when microphone permission is denied", async () => {
+    class MockMediaRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+    }
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockRejectedValue({ name: "NotAllowedError" }),
+      },
+    });
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+
+    const user = userEvent.setup();
+    wrap(<AddWordPage />, "/app/1/add");
+    await user.click(await screen.findByRole("button", { name: "开始语音录词" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "请在浏览器设置中允许后重试",
+    );
+    expect(transcribeVoiceMock).not.toHaveBeenCalled();
   });
 });
 

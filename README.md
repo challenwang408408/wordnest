@@ -132,6 +132,8 @@ npm run build
 RUN_AI_SMOKE=1 AI_BUILDER_TOKEN=... PYTHONPATH=. .venv/bin/python scripts/ai_smoke.py
 ```
 
+“家长工具 > 批量录词”支持浏览器话筒录入。录音停止后会等浏览器交付最终音频，把录音物化为原始字节并在内存中转发到 AI Builders，只回填最多 20 个逗号分隔的英文单词，不会直接写入词库。生产环境需通过 HTTPS 访问，浏览器才会开放话筒权限；原始字节上传用于兼容 iPhone Safari 和第三方 WKWebView。
+
 ## 环境变量
 
 见 `.env.example`。生产必须：

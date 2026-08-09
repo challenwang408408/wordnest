@@ -1,9 +1,10 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../../api/client";
 import type { EnrichResult } from "../../types";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, LoaderCircle, Mic, Square } from "lucide-react";
+import { MAX_VOICE_SECONDS, useWordVoiceInput } from "../../hooks/useWordVoiceInput";
 
 type DraftItem = EnrichResult & { selected: boolean; key: string };
 
@@ -34,6 +35,10 @@ export function parseSpellings(raw: string): string[] {
   return out;
 }
 
+export function mergeVoiceWords(current: string, words: string[]): string {
+  return parseSpellings([current, ...words].join(", ")).join(", ");
+}
+
 export function AddWordPage() {
   const { profileId: raw } = useParams();
   const profileId = Number(raw);
@@ -44,6 +49,10 @@ export function AddWordPage() {
   const [libraryIds, setLibraryIds] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const appendVoiceWords = useCallback((words: string[]) => {
+    setInput((current) => mergeVoiceWords(current, words));
+  }, []);
+  const voice = useWordVoiceInput({ profileId, onWords: appendVoiceWords });
 
   const libs = useQuery({
     queryKey: ["libraries", profileId],
@@ -187,6 +196,49 @@ export function AddWordPage() {
             required
           />
         </div>
+        <div className="voice-entry-row">
+          <button
+            type="button"
+            className={`voice-record-button${voice.isRecording ? " is-recording" : ""}`}
+            aria-label={voice.isRecording ? "停止录音" : "开始语音录词"}
+            aria-pressed={voice.isRecording}
+            onClick={voice.isRecording ? voice.stopRecording : voice.startRecording}
+            disabled={!voice.isSupported || voice.isBusy || enrich.isPending}
+          >
+            {voice.phase === "requesting" || voice.phase === "transcribing" ? (
+              <LoaderCircle className="spin" size={19} aria-hidden="true" />
+            ) : voice.isRecording ? (
+              <Square size={17} fill="currentColor" aria-hidden="true" />
+            ) : (
+              <Mic size={20} aria-hidden="true" />
+            )}
+            <span>
+              {voice.phase === "requesting"
+                ? "准备话筒"
+                : voice.phase === "transcribing"
+                  ? "识别中"
+                  : voice.isRecording
+                    ? `停止 ${String(Math.floor(voice.elapsedSeconds / 60)).padStart(2, "0")}:${String(voice.elapsedSeconds % 60).padStart(2, "0")}`
+                    : "语音录词"}
+            </span>
+          </button>
+          <div className="voice-entry-copy" aria-live="polite">
+            <strong>
+              {voice.isRecording
+                ? `正在听英文单词，最长 ${MAX_VOICE_SECONDS} 秒`
+                : "说完自动按逗号整理"}
+            </strong>
+            <span>{voice.message ?? "适合一次录入多个单词"}</span>
+          </div>
+        </div>
+        {!voice.isSupported ? (
+          <p className="voice-message" role="status">
+            当前浏览器不支持录音，请继续键盘输入。
+          </p>
+        ) : null}
+        {voice.error ? (
+          <p className="voice-message is-error" role="alert">{voice.error}</p>
+        ) : null}
         <p className="muted" style={{ margin: 0 }}>
           最多 20 个；重复拼写会自动去掉。
         </p>

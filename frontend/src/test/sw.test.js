@@ -37,8 +37,9 @@ describe("WordNest service worker cache cleanup", () => {
     listeners.activate({ waitUntil: (promise) => { activation = promise; } });
     await activation;
 
-    expect(deleteCache).toHaveBeenCalledTimes(1);
+    expect(deleteCache).toHaveBeenCalledTimes(2);
     expect(deleteCache).toHaveBeenCalledWith("wordnest-shell-v1");
+    expect(deleteCache).toHaveBeenCalledWith("wordnest-shell-v2");
     expect(deleteCache).not.toHaveBeenCalledWith("another-project-shell-v7");
   });
 });

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from backend.app.api.deps import (
     ensure_libraries_belong,
@@ -23,6 +24,7 @@ from backend.app.schemas import (
     EnrichResult,
     MessageOut,
     ScanResult,
+    VoiceTranscriptionOut,
     WordBatchCreate,
     WordBatchOut,
     WordCreate,
@@ -289,3 +291,53 @@ async def scan_words_from_image(
         seen.add(key)
         cleaned.append(cand.model_copy(update={"spelling": spelling}))
     return ScanResult(candidates=cleaned[:20])
+
+
+@router.post("/transcribe-voice", response_model=VoiceTranscriptionOut)
+async def transcribe_voice_words(
+    profile_id: int,
+    _auth: AuthDep,
+    db: DbDep,
+    settings: SettingsDep,
+    request: Request,
+) -> VoiceTranscriptionOut:
+    get_profile_or_404(db, profile_id)
+    content_type = request.headers.get("content-type", "")
+    if content_type.lower().startswith("multipart/form-data"):
+        form = await request.form()
+        upload = form.get("file")
+        if not isinstance(upload, StarletteUploadFile):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="没有收到录音文件",
+            )
+        mime = (upload.content_type or "").split(";", 1)[0].strip().lower()
+        raw = await upload.read(settings.max_audio_bytes + 1)
+        await upload.close()
+    else:
+        mime = content_type.split(";", 1)[0].strip().lower()
+        chunks: list[bytes] = []
+        total_bytes = 0
+        async for chunk in request.stream():
+            total_bytes += len(chunk)
+            if total_bytes > settings.max_audio_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="录音太大了，请控制在 8MB 以内",
+                )
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    if mime not in settings.allowed_audio_mimes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="只支持 webm、m4a、mp3、wav、ogg、aac 或 flac 录音",
+        )
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="录音是空的")
+    if len(raw) > settings.max_audio_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="录音太大了，请控制在 8MB 以内",
+        )
+    client = get_ai_client(settings)
+    return client.transcribe_words(raw, mime)

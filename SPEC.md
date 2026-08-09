@@ -24,6 +24,7 @@
 ### 2.3 单词录入
 
 - 手工录入：支持一次输入多个英语单词（换行 / 逗号 / 空格分隔，最多 20 个，自动去重）。调用 AI Builders `grok-4.5` 批量返回规范 JSON 数组，每项含标准拼写、一个核心中文释义、词性、IPA、美式音节分隔和简短例句。单词输入仍可用。
+- 语音录入：批量录词输入框提供话筒按钮，支持最多 60 秒短录音。停止后等待最终 `dataavailable` 再释放话筒轨道，录音物化为原始字节后只在内存中转发给 AI Builders，不落盘；识别固定提示为英文单词听写，后端再做英文字符过滤、小写化、去重与最多 20 个限制，按逗号分隔回填现有输入框。
 - 批量补全后进入确认列表：用户可勾选、展开改字段、选择目标词库，再统一保存；AI 漏掉的词以可编辑空草稿保留，不静默丢弃。
 - 拍照录入：手机相机或相册上传图片，后端仅在内存中处理，调用 AI Builders `kimi-k2.5` vision 提取适合小学生学习的英语候选词。
 - OCR 结果必须进入确认页。用户可勾选、改拼写、补中文提示、选择目标词库，再通过单次批量 AI 请求补全，并用一个后端事务统一保存；识别结果不得未经确认直接入库。
@@ -78,6 +79,7 @@
 - `POST /profiles/{profile_id}/words/enrich-batch`
 - `POST /profiles/{profile_id}/words/batch`
 - `POST /profiles/{profile_id}/words/scan`
+- `POST /profiles/{profile_id}/words/transcribe-voice`
 - `POST /profiles/{profile_id}/quiz/preview`
 - `POST /profiles/{profile_id}/quiz/start`
 - `POST /profiles/{profile_id}/quiz/{word_id}/rate`
@@ -93,6 +95,7 @@ API base：`https://space.ai-builders.com/backend/v1`，Token 仅从 `AI_BUILDER
 - 手输 enrichment 模型：`grok-4.5`（单词与批量共用）。
 - 图片识别模型：`kimi-k2.5`，请求温度固定 `1.0`，图片以经过尺寸和大小限制的 data URL 发送。
 - 服务端设置超时、最大 5MB 图片、MIME 白名单和结构化响应校验。
+- 短语音使用 `/v1/audio/transcriptions`，固定 `language=en` 与英文词表听写 prompt；前端以带音频 MIME 的原始字节请求规避 iOS WKWebView 的空 multipart 文件兼容问题，后端暂时兼容旧版 multipart 客户端。最大 8MB，使用音频 MIME 白名单，响应只暴露规范单词、逗号分隔文本和 `request_id`。
 - AI 响应先去 Markdown fence，再 JSON parse，再用 Pydantic 校验。无效响应返回可识别的 502 错误，不保存半成品。
 - 测试中 mock AI 客户端；另提供一个显式 opt-in 的真实 smoke 脚本，不在普通测试中消耗额度。
 
@@ -151,7 +154,7 @@ requirements.txt
 - 同一客户端 60 秒内连续 5 次失败后短时限流；只有回环或私网代理来源的 `X-Real-IP` 才被信任。当前进程内限流依赖单进程部署，多 worker 时必须切换共享存储。
 - Cookie 设置 HttpOnly、SameSite=Lax，生产环境 Secure；会话签名密钥来自环境变量。
 - CORS 默认不开放；同源部署。
-- 图片不落盘、不记录 base64；日志不记录访问码、Token、Cookie 或儿童数据正文。
+- 图片和录音不落盘、不记录 base64 或转写正文；日志不记录访问码、Token、Cookie 或儿童数据正文。
 - 所有环境文件、数据库、上传和测试产物写入 `.gitignore`。
 
 ## 9. 验收标准
@@ -160,6 +163,7 @@ requirements.txt
 
 - 后端：登录、角色资源隔离、词库 CRUD、重复词幂等、AI 无效 JSON 不入库、测试抽取与评分持久化。
 - 前端：关键组件与角色切换、批量录词、拍照批量补全、紧凑词库、四选一评分和薄弱词直练。
+- 语音录词：覆盖开始、异步最终音频到达后再停轨、原始字节上传、旧 multipart 兼容、识别回填、权限失败和不支持录音时的降级提示。
 - `pytest`, `npm test`, `npm run lint`, `npm run build` 全通过。
 
 ### 本地端到端
