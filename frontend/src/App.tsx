@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -7,9 +7,10 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
   useParams,
 } from "react-router-dom";
-import { api, ApiError } from "./api/client";
+import { api, ApiError, AUTH_EXPIRED_EVENT } from "./api/client";
 import { BottomNav } from "./components/BottomNav";
 import { LoginPage } from "./features/auth/LoginPage";
 import { SelectProfilePage } from "./features/auth/SelectProfilePage";
@@ -66,6 +67,24 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   return children;
 }
 
+function SessionExpiryRedirect() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { clearProfile } = useProfile();
+
+  useEffect(() => {
+    const onExpired = () => {
+      queryClient.clear();
+      clearProfile();
+      navigate("/login", { replace: true, state: { sessionExpired: true } });
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, [clearProfile, navigate, queryClient]);
+
+  return null;
+}
+
 export function AppLayout() {
   const { profileId: rawProfileId } = useParams();
   const profileId = Number(rawProfileId);
@@ -99,7 +118,7 @@ export function AppLayout() {
 
 function SiteReturnBar() {
   const location = useLocation();
-  if (location.pathname.endsWith("/quiz")) return null;
+  if (location.pathname !== "/login") return null;
 
   return (
     <nav className="site-return" aria-label="个人网站导航">
@@ -129,6 +148,7 @@ function ScrollToTop() {
 export default function App() {
   return (
     <ProfileProvider>
+      <SessionExpiryRedirect />
       <ScrollToTop />
       <SiteReturnBar />
       <Routes>

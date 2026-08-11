@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "wordnest-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v3`;
+const CACHE_NAME = `${CACHE_PREFIX}v4`;
 
 function scopePath() {
   return new URL(self.registration.scope).pathname;

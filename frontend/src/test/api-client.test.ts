@@ -32,3 +32,35 @@ describe("voice upload", () => {
     expect((init.body as ArrayBuffer).byteLength).toBe(audio.size);
   });
 });
+
+describe("API session expiry signal", () => {
+  it("announces a protected 401 so the app can return to login", async () => {
+    const onExpired = vi.fn();
+    window.addEventListener("wordnest:auth-expired", onExpired, { once: true });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: "登录已失效" }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    )));
+
+    await expect(api.startQuiz(1, [10])).rejects.toMatchObject({
+      status: 401,
+      message: "登录已失效",
+    });
+    expect(onExpired).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not announce expiry for the login endpoint itself", async () => {
+    const onExpired = vi.fn();
+    window.addEventListener("wordnest:auth-expired", onExpired, { once: true });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: "访问码不对" }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    )));
+
+    await expect(api.login("0000")).rejects.toMatchObject({
+      status: 401,
+      message: "访问码不对",
+    });
+    expect(onExpired).not.toHaveBeenCalled();
+  });
+});

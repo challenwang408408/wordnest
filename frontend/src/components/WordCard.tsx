@@ -24,6 +24,11 @@ export function WordCard({
   const { speak, voiceHint } = useSpeech();
   const [playing, setPlaying] = useState(false);
 
+  function playWord() {
+    const ok = speak(spelling);
+    if (ok) setPlaying(true);
+  }
+
   return (
     <article className="surface word-card">
       <div className="row word-card__heading">
@@ -35,10 +40,7 @@ export function WordCard({
           type="button"
           className="btn btn-secondary"
           aria-label="朗读单词"
-          onClick={() => {
-            const ok = speak(spelling);
-            if (ok) setPlaying(true);
-          }}
+          onClick={playWord}
         >
           听发音
         </button>
@@ -48,6 +50,8 @@ export function WordCard({
         fallback={spelling}
         playing={playing}
         onDone={() => setPlaying(false)}
+        onActivate={playWord}
+        ariaLabel={`朗读 ${spelling} 音节`}
       />
       {showMeaning && meaningZh ? (
         <p style={{ margin: "14px 0 0", fontSize: "1.05rem" }}>{meaningZh}</p>

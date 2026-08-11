@@ -13,6 +13,7 @@ import type {
 } from "../types";
 
 const API = "/api/wordnest";
+export const AUTH_EXPIRED_EVENT = "wordnest:auth-expired";
 
 export class ApiError extends Error {
   status: number;
@@ -48,6 +49,9 @@ async function request<T>(
       }
     } catch {
       // keep default
+    }
+    if (response.status === 401 && path !== "/auth/login") {
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
     }
     throw new ApiError(response.status, message);
   }

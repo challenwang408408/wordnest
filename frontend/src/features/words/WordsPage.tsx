@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useState } from "react";
 import { api } from "../../api/client";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { WordCard } from "../../components/WordCard";
-import { ChevronDown, Search } from "lucide-react";
+import { ChevronDown, Plus, Search, Volume2 } from "lucide-react";
+import { useSpeech } from "../../hooks/useSpeech";
 
 export function WordsPage() {
   const { profileId: raw } = useParams();
   const profileId = Number(raw);
   const qc = useQueryClient();
+  const { speak, voiceHint } = useSpeech();
   const [q, setQ] = useState("");
   const [libraryId, setLibraryId] = useState<number | "">("");
   const [status, setStatus] = useState<string>("");
@@ -22,6 +25,8 @@ export function WordsPage() {
   const [editLibraryIds, setEditLibraryIds] = useState<number[]>([]);
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; spelling: string } | null>(null);
 
   const libs = useQuery({
     queryKey: ["libraries", profileId],
@@ -80,13 +85,13 @@ export function WordsPage() {
   const remove = useMutation({
     mutationFn: (wordId: number) => api.deleteWord(profileId, wordId),
     onSuccess: async () => {
-      setActionError(null);
+      setDeleteError(null);
       setExpandedId(null);
       await qc.invalidateQueries({ queryKey: ["words", profileId] });
       await qc.invalidateQueries({ queryKey: ["dashboard", profileId] });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "删除失败，请重试");
+      setDeleteError(err instanceof Error ? err.message : "删除失败，请重试");
     },
   });
 
@@ -98,9 +103,19 @@ export function WordsPage() {
 
   return (
     <div className="stack">
-      <div>
-        <h1 className="page-title">词库</h1>
-        <p className="page-sub">先快速找到词，需要时再展开管理。</p>
+      <div className="page-heading-actions">
+        <div>
+          <h1 className="page-title">词库</h1>
+          <p className="page-sub">先快速找到词，需要时再展开管理。</p>
+        </div>
+        <Link
+          className="btn btn-primary page-primary-action"
+          to={`/app/${profileId}/add`}
+          aria-label="录新词"
+        >
+          <Plus size={18} aria-hidden="true" />
+          <span>录新词</span>
+        </Link>
       </div>
 
       <section className="surface word-filters" aria-label="筛选单词">
@@ -158,6 +173,7 @@ export function WordsPage() {
         </div>
       ) : null}
       {actionError ? <div className="error-banner" role="alert">{actionError}</div> : null}
+      {voiceHint ? <div className="error-banner" role="status">{voiceHint}</div> : null}
       {(words.data ?? []).length === 0 && !words.isLoading && !words.isError ? (
         <div className="surface empty">
           {q || libraryId !== "" || status
@@ -173,25 +189,38 @@ export function WordsPage() {
           return (
             <article key={word.id} className="surface word-list-item">
               <div className="word-list-summary">
-                <div className="word-list-copy">
-                  <h2>{word.spelling}</h2>
-                  <p><span>{word.meaning_zh}</span>{word.ipa ? ` · ${word.ipa}` : ""}</p>
-                </div>
-                <span className={word.is_mastered ? "status-pill is-mastered" : "status-pill"}>
-                  {word.is_mastered ? "已掌握" : "学习中"}
-                </span>
                 <button
                   type="button"
-                  className="word-expand"
+                  className="word-summary-toggle"
                   aria-label={`${expanded ? "收起" : "查看"} ${word.spelling} 详情`}
                   aria-expanded={expanded}
                   aria-controls={detailId}
                   onClick={() => {
                     setExpandedId(expanded ? null : word.id);
-                    if (expanded && editingId === word.id) setEditingId(null);
+                    setEditingId(null);
+                    setEnrichError(null);
                   }}
                 >
-                  <ChevronDown size={20} aria-hidden="true" />
+                  <span className="word-list-copy">
+                    <strong className="word-list-title">{word.spelling}</strong>
+                    <span className="word-list-meta">
+                      <b>{word.meaning_zh}</b>{word.ipa ? ` · ${word.ipa}` : ""}
+                    </span>
+                  </span>
+                  <span className={word.is_mastered ? "status-pill is-mastered" : "status-pill"}>
+                    {word.is_mastered ? "已掌握" : "学习中"}
+                  </span>
+                  <span className="word-expand-icon" aria-hidden="true">
+                    <ChevronDown size={20} />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="word-list-speak"
+                  aria-label={`朗读 ${word.spelling}`}
+                  onClick={() => void speak(word.spelling)}
+                >
+                  <Volume2 size={19} aria-hidden="true" />
                 </button>
               </div>
 
@@ -246,10 +275,8 @@ export function WordsPage() {
                       className="btn btn-danger"
                       disabled={remove.isPending}
                       onClick={() => {
-                        if (window.confirm(`确定删除「${word.spelling}」吗？删除后无法恢复。`)) {
-                          setActionError(null);
-                          remove.mutate(word.id);
-                        }
+                        setDeleteError(null);
+                        setDeleteTarget({ id: word.id, spelling: word.spelling });
                       }}
                     >
                       删除
@@ -336,6 +363,25 @@ export function WordsPage() {
           );
         })}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`删除 ${deleteTarget?.spelling ?? "这个单词"}？`}
+        description="单词、学习进度和复习记录都会被删除，这一步无法恢复。"
+        busy={remove.isPending}
+        error={deleteError}
+        onCancel={() => {
+          setDeleteError(null);
+          setDeleteTarget(null);
+        }}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          setDeleteError(null);
+          remove.mutate(deleteTarget.id, {
+            onSuccess: () => setDeleteTarget(null),
+          });
+        }}
+      />
     </div>
   );
 }

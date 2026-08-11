@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
@@ -22,6 +22,7 @@ export function QuizPage() {
   const profileId = Number(raw);
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const libraryIds = (location.state as LocationState | null)?.libraryIds ?? [];
   const wordIds = (location.state as LocationState | null)?.wordIds ?? [];
   const [index, setIndex] = useState(0);
@@ -34,6 +35,8 @@ export function QuizPage() {
   const [done, setDone] = useState(false);
   const [words, setWords] = useState<QuizWord[]>([]);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const answerActionsRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
 
   const start = useQuery({
     queryKey: ["quiz", profileId, libraryIds.join(","), wordIds.join(",")],
@@ -71,10 +74,26 @@ export function QuizPage() {
     titleRef.current?.focus({ preventScroll: true });
   }, [index, done]);
 
+  useEffect(() => {
+    if (!answered) return;
+    feedbackRef.current?.focus({ preventScroll: true });
+    answerActionsRef.current?.scrollIntoView?.({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "nearest",
+    });
+  }, [answered]);
+
   const submit = useMutation({
     mutationFn: ({ wordId, value }: { wordId: number; value: Rating }) =>
       api.rateQuiz(profileId, wordId, value),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["dashboard", profileId] }),
+        queryClient.invalidateQueries({ queryKey: ["quiz-preview", profileId] }),
+        queryClient.invalidateQueries({ queryKey: ["words", profileId] }),
+      ]);
       if (isLast) {
         setDone(true);
       } else {
@@ -298,11 +317,13 @@ export function QuizPage() {
           </div>
 
           {answered ? (
-            <div className="stack quiz-answer-actions" style={{ gap: 10 }}>
+            <div ref={answerActionsRef} className="stack quiz-answer-actions" style={{ gap: 10 }}>
               <div
+                ref={feedbackRef}
                 className={isCorrect ? "quiz-feedback is-ok" : "quiz-feedback is-no"}
                 role="status"
                 aria-live="polite"
+                tabIndex={-1}
               >
                 {isCorrect ? <CheckCircle2 aria-hidden="true" /> : <CircleX aria-hidden="true" />}
                 <div>
@@ -323,7 +344,7 @@ export function QuizPage() {
                   disabled={rating === "familiar"}
                   onClick={markFamiliar}
                 >
-                  {rating === "familiar" ? "已记为还不太熟" : "刚才是猜的，还不太熟"}
+                  {rating === "familiar" ? "已记为还不太熟" : "其实是蒙的"}
                 </button>
               ) : null}
               <button

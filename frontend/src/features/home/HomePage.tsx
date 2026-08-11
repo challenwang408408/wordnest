@@ -2,14 +2,23 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import { ProfileHeader } from "../../components/ProfileHeader";
-import { useEffect, useState } from "react";
-import { ArrowRight, BookOpenCheck, Camera, PenLine, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowRight,
+  BookOpenCheck,
+  Camera,
+  ChevronDown,
+  PenLine,
+  Sparkles,
+} from "lucide-react";
 
 export function HomePage() {
   const { profileId: raw } = useParams();
   const profileId = Number(raw);
   const navigate = useNavigate();
   const [selectedLibs, setSelectedLibs] = useState<number[]>([]);
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
+  const initializedProfileId = useRef<number | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["dashboard", profileId],
@@ -24,10 +33,11 @@ export function HomePage() {
   });
 
   useEffect(() => {
-    if (data?.libraries) {
-      setSelectedLibs(data.libraries.map((l) => l.id));
+    if (data?.libraries && initializedProfileId.current !== profileId) {
+      setSelectedLibs(data.libraries.filter((library) => library.word_count > 0).map((library) => library.id));
+      initializedProfileId.current = profileId;
     }
-  }, [data]);
+  }, [data?.libraries, profileId]);
 
   function toggleLib(id: number) {
     setSelectedLibs((prev) =>
@@ -39,6 +49,15 @@ export function HomePage() {
   const estimatedMinutes = Math.max(1, Math.ceil((challengeCount ?? 0) * 0.45));
   const isPreparing = selectedLibs.length > 0 && preview.isLoading;
   const previewFailed = Boolean(preview.error);
+  const availableLibraries = data?.libraries.filter((library) => library.word_count > 0) ?? [];
+  const hasAvailableLibraries = availableLibraries.length > 0;
+  const scopeSummary = !hasAvailableLibraries
+    ? "暂无可学词库"
+    : selectedLibs.length === 0
+      ? "还没选择挑战范围"
+      : selectedLibs.length === availableLibraries.length
+        ? `全部可学词库 · ${previewFailed ? "题数待定" : `${challengeCount ?? "…"} 词`}`
+        : `已选 ${selectedLibs.length} 个词库 · ${previewFailed ? "题数待定" : `${challengeCount ?? "…"} 词`}`;
 
   return (
     <div className="stack">
@@ -63,6 +82,8 @@ export function HomePage() {
           <span>
             {previewFailed
               ? "需要重试"
+              : !hasAvailableLibraries
+                ? "等待新词"
               : selectedLibs.length === 0
                 ? "未选范围"
               : isPreparing
@@ -79,6 +100,8 @@ export function HomePage() {
             <p>
               {previewFailed
                 ? "题数暂时没有准备好，学习内容不会丢失。"
+                : !hasAvailableLibraries
+                  ? "词库还是空的，请家长先放入几个新词。"
                 : selectedLibs.length === 0
                   ? "还没有选择挑战范围，请先勾选至少一个词库。"
                 : (challengeCount ?? 0) > 0
@@ -98,23 +121,48 @@ export function HomePage() {
           <div><strong>{data?.total_words ?? 0}</strong><span>词库总量</span></div>
         </div>
 
-        <fieldset className="library-picker">
-          <legend>挑战范围</legend>
-          {(data?.libraries ?? []).map((lib) => (
-            <label key={lib.id} className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={selectedLibs.includes(lib.id)}
-                onChange={() => toggleLib(lib.id)}
-              />
-              <span className="grow">
-                {lib.name}
-                {lib.is_default ? "（默认）" : ""}
-              </span>
-              <span>{lib.word_count} 词</span>
-            </label>
-          ))}
-        </fieldset>
+        <div className="scope-disclosure">
+          <button
+            type="button"
+            className="scope-disclosure__toggle"
+            aria-label={`调整挑战范围，当前${scopeSummary}`}
+            aria-expanded={showLibraryPicker}
+            aria-controls="challenge-library-picker"
+            onClick={() => setShowLibraryPicker((shown) => !shown)}
+          >
+            <span className="scope-disclosure__copy">
+              <small>挑战范围</small>
+              <strong>{scopeSummary}</strong>
+            </span>
+            <span className="scope-disclosure__action" aria-hidden="true">
+              调整
+              <ChevronDown size={18} />
+            </span>
+          </button>
+          {showLibraryPicker ? (
+            <fieldset id="challenge-library-picker" className="library-picker">
+              <legend className="visually-hidden">选择挑战词库</legend>
+              {(data?.libraries ?? []).map((lib) => (
+                <label
+                  key={lib.id}
+                  className={`checkbox-row${lib.word_count === 0 ? " is-disabled" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedLibs.includes(lib.id)}
+                    disabled={lib.word_count === 0}
+                    onChange={() => toggleLib(lib.id)}
+                  />
+                  <span className="grow">
+                    {lib.name}
+                    {lib.is_default ? "（默认）" : ""}
+                  </span>
+                  <span>{lib.word_count} 词</span>
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+        </div>
         {preview.error ? (
           <div className="error-banner" role="alert">
             <span>题数准备失败，当前词库状态未改变。</span>
@@ -147,6 +195,8 @@ export function HomePage() {
             ? "正在准备挑战…"
             : previewFailed
               ? "请先重试准备"
+              : !hasAvailableLibraries
+                ? "先请家长录入单词"
               : (challengeCount ?? 0) > 0
               ? `开始 ${challengeCount} 词挑战`
               : selectedLibs.length === 0

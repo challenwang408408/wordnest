@@ -1,14 +1,18 @@
 import { type FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { ArrowRight, KeyRound } from "lucide-react";
 import { BrandLockup } from "../../components/BrandLockup";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const sessionExpired = Boolean(
+    (location.state as { sessionExpired?: boolean } | null)?.sessionExpired,
+  );
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -39,13 +43,17 @@ export function LoginPage() {
         </div>
       </section>
       <section className="surface login-panel stack">
-        <BrandLockup compact />
         <div className="login-heading">
           <p className="eyebrow">家庭入口</p>
           <h2>回到词芽</h2>
           <p className="page-sub">输入 4 位家庭访问码，继续今天的学习任务。</p>
         </div>
         <form className="stack" onSubmit={onSubmit}>
+          {sessionExpired ? (
+            <div className="error-banner" role="status">
+              登录已失效，请重新输入家庭访问码。
+            </div>
+          ) : null}
           <div className="field">
             <label htmlFor="access">
               <KeyRound size={16} aria-hidden="true" />

@@ -6,9 +6,18 @@ type Props = {
   fallback: string;
   playing: boolean;
   onDone?: () => void;
+  onActivate?: () => void;
+  ariaLabel?: string;
 };
 
-export function SyllableTrack({ syllables, fallback, playing, onDone }: Props) {
+export function SyllableTrack({
+  syllables,
+  fallback,
+  playing,
+  onDone,
+  onActivate,
+  ariaLabel,
+}: Props) {
   const parts = splitSyllables(syllables, fallback);
   const [active, setActive] = useState(-1);
   const reduceMotion =
@@ -40,8 +49,11 @@ export function SyllableTrack({ syllables, fallback, playing, onDone }: Props) {
     return () => window.clearInterval(timer);
   }, [playing, parts.length, reduceMotion, onDone]);
 
-  return (
-    <div className="syllable-track" aria-label="音节声轨">
+  const trackClass = `syllable-track${parts.length === 1 ? " is-single" : ""}${
+    onActivate ? " is-interactive" : ""
+  }`;
+  const chips = (
+    <>
       {parts.map((part, index) => (
         <span
           key={`${part}-${index}`}
@@ -50,6 +62,21 @@ export function SyllableTrack({ syllables, fallback, playing, onDone }: Props) {
           {part}
         </span>
       ))}
+    </>
+  );
+
+  return onActivate ? (
+    <button
+      type="button"
+      className={trackClass}
+      aria-label={ariaLabel || `朗读 ${fallback} 音节`}
+      onClick={onActivate}
+    >
+      {chips}
+    </button>
+  ) : (
+    <div className={trackClass} aria-label="音节声轨">
+      {chips}
     </div>
   );
 }

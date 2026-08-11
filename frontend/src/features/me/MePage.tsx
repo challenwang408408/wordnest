@@ -1,13 +1,18 @@
 import { type FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { useProfile } from "../../hooks/useProfile";
 import {
   Activity,
   AlertCircle,
+  Camera,
   CalendarCheck2,
+  CheckCircle2,
   Gauge,
+  PenLine,
+  RefreshCw,
 } from "lucide-react";
 
 export function MePage() {
@@ -20,6 +25,12 @@ export function MePage() {
   const [renameId, setRenameId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: number;
+    name: string;
+    wordCount: number;
+  } | null>(null);
 
   const dashboard = useQuery({
     queryKey: ["dashboard", profileId],
@@ -51,10 +62,11 @@ export function MePage() {
     mutationFn: ({ id, force }: { id: number; force: boolean }) =>
       api.deleteLibrary(profileId, id, force),
     onSuccess: async () => {
+      setDeleteError(null);
       await qc.invalidateQueries({ queryKey: ["libraries", profileId] });
       await qc.invalidateQueries({ queryKey: ["dashboard", profileId] });
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "删除失败"),
+    onError: (err) => setDeleteError(err instanceof Error ? err.message : "删除失败"),
   });
 
   function onCreate(e: FormEvent) {
@@ -76,9 +88,20 @@ export function MePage() {
 
   const header = (
     <header className="parent-dashboard-header">
-      <p className="eyebrow">家长视角</p>
-      <h1 className="page-title">家长看板</h1>
-      <p className="page-sub">当前：{displayName} · 先看趋势，再决定要不要加练。</p>
+      <div className="parent-dashboard-header__copy">
+        <p className="eyebrow">家长视角</p>
+        <h1 className="page-title">家长看板</h1>
+        <p className="page-sub">当前：{displayName} · 先看趋势，再决定要不要加练。</p>
+      </div>
+      <button
+        type="button"
+        className="btn btn-ghost parent-switch"
+        aria-label={`切换孩子，当前${displayName}`}
+        onClick={() => navigate("/select")}
+      >
+        <RefreshCw size={16} aria-hidden="true" />
+        <span>切换孩子</span>
+      </button>
     </header>
   );
 
@@ -120,6 +143,9 @@ export function MePage() {
   const data = dashboard.data;
   const libraries = data.libraries;
   const weakWords = data.weak_words;
+  const availableLibraryIds = libraries
+    .filter((library) => library.word_count > 0)
+    .map((library) => library.id);
 
   return (
     <div className="stack">
@@ -155,6 +181,17 @@ export function MePage() {
               : "当前没有到期词，让孩子自由读几分钟英文也很好。"}
           </p>
         </div>
+        {data.due_words > 0 && availableLibraryIds.length > 0 ? (
+          <button
+            type="button"
+            className="btn btn-primary parent-attention__action"
+            onClick={() => navigate(`/app/${profileId}/quiz`, {
+              state: { libraryIds: availableLibraryIds },
+            })}
+          >
+            让{displayName}开始复习
+          </button>
+        ) : null}
       </section>
 
       <section className="surface parent-panel" aria-labelledby="weak-words-title">
@@ -163,7 +200,11 @@ export function MePage() {
             <p className="eyebrow">近 7 天</p>
             <h2 id="weak-words-title">需要多看一眼</h2>
           </div>
-          <AlertCircle size={22} aria-hidden="true" />
+          {weakWords.length > 0 ? (
+            <AlertCircle size={22} aria-hidden="true" />
+          ) : (
+            <CheckCircle2 className="is-positive" size={22} aria-hidden="true" />
+          )}
         </div>
         {weakWords.length > 0 ? (
           <>
@@ -188,6 +229,28 @@ export function MePage() {
         ) : (
           <p className="parent-empty">近 7 天没有明显薄弱词，保持现在的节奏。</p>
         )}
+      </section>
+
+      <section className="surface parent-panel parent-quick-tools" aria-labelledby="parent-tools-title">
+        <div className="parent-panel__heading">
+          <div>
+            <p className="eyebrow">快速录入</p>
+            <h2 id="parent-tools-title">家长工具</h2>
+          </div>
+          <span>少走一步</span>
+        </div>
+        <div className="dual-entry">
+          <Link className="entry-card" to={`/app/${profileId}/add`}>
+            <PenLine size={22} aria-hidden="true" />
+            <strong>批量录词</strong>
+            <span>输入或语音说出新词</span>
+          </Link>
+          <Link className="entry-card" to={`/app/${profileId}/scan`}>
+            <Camera size={22} aria-hidden="true" />
+            <strong>拍照找词</strong>
+            <span>拍下书页后勾选保存</span>
+          </Link>
+        </div>
       </section>
 
       <section className="surface stack library-manager">
@@ -244,14 +307,11 @@ export function MePage() {
                   type="button"
                   className="btn btn-danger"
                   onClick={() => {
-                    const message =
-                      lib.word_count > 0
-                        ? `「${lib.name}」里还有 ${lib.word_count} 个词。删除词库只会解除关联，不会删掉单词本身。确定吗？`
-                        : `确定删除空词库「${lib.name}」吗？`;
-                    if (!window.confirm(message)) return;
-                    deleteLib.mutate({
+                    setDeleteError(null);
+                    setDeleteTarget({
                       id: lib.id,
-                      force: lib.word_count > 0,
+                      name: lib.name,
+                      wordCount: lib.word_count,
                     });
                   }}
                 >
@@ -277,12 +337,31 @@ export function MePage() {
         </form>
       </section>
 
-      <button type="button" className="btn btn-ghost" onClick={() => navigate("/select")}>
-        切换孩子
-      </button>
-      <button type="button" className="btn btn-danger" onClick={() => void onLogout()}>
+      <button type="button" className="btn btn-ghost" onClick={() => void onLogout()}>
         退出登录
       </button>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`删除 ${deleteTarget?.name ?? "这个词库"}？`}
+        description={deleteTarget && deleteTarget.wordCount > 0
+          ? `词库里还有 ${deleteTarget.wordCount} 个词。删除只会解除词库关联，不会删掉单词本身。`
+          : "这是一个空词库，删除后无法恢复。"}
+        busy={deleteLib.isPending}
+        error={deleteError}
+        onCancel={() => {
+          setDeleteError(null);
+          setDeleteTarget(null);
+        }}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          setDeleteError(null);
+          deleteLib.mutate(
+            { id: deleteTarget.id, force: deleteTarget.wordCount > 0 },
+            { onSuccess: () => setDeleteTarget(null) },
+          );
+        }}
+      />
     </div>
   );
 }

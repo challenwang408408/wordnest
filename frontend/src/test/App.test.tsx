@@ -1,9 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SyllableTrack } from "../components/SyllableTrack";
 import { BottomNav } from "../components/BottomNav";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ProfileProvider } from "../hooks/useProfile";
 import { SelectProfilePage } from "../features/auth/SelectProfilePage";
@@ -12,7 +12,7 @@ import { AddWordPage } from "../features/words/AddWordPage";
 import { ScanPage } from "../features/words/ScanPage";
 import { MePage } from "../features/me/MePage";
 import { voiceAvailabilityMessage } from "../hooks/useSpeech";
-import { AppLayout, RequireAuth } from "../App";
+import App, { AppLayout, RequireAuth } from "../App";
 import { LoginPage } from "../features/auth/LoginPage";
 import { HomePage } from "../features/home/HomePage";
 import { WordsPage } from "../features/words/WordsPage";
@@ -33,10 +33,12 @@ const quizPreviewMock = vi.fn();
 const wordsMock = vi.fn();
 const updateWordMock = vi.fn();
 const deleteWordMock = vi.fn();
+const deleteLibraryMock = vi.fn();
 const sessionMock = vi.fn();
 const logoutMock = vi.fn();
 
 vi.mock("../api/client", () => ({
+  AUTH_EXPIRED_EVENT: "wordnest:auth-expired",
   api: {
     profiles: (...args: unknown[]) => profilesMock(...args),
     libraries: (...args: unknown[]) => librariesMock(...args),
@@ -54,6 +56,7 @@ vi.mock("../api/client", () => ({
     words: (...args: unknown[]) => wordsMock(...args),
     updateWord: (...args: unknown[]) => updateWordMock(...args),
     deleteWord: (...args: unknown[]) => deleteWordMock(...args),
+    deleteLibrary: (...args: unknown[]) => deleteLibraryMock(...args),
     session: (...args: unknown[]) => sessionMock(...args),
     logout: (...args: unknown[]) => logoutMock(...args),
   },
@@ -87,7 +90,7 @@ function wrap(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const result = render(
     <QueryClientProvider client={client}>
       <ProfileProvider>
         <MemoryRouter initialEntries={[state ? { pathname: path, state } : path]}>
@@ -103,25 +106,51 @@ function wrap(
       </ProfileProvider>
     </QueryClientProvider>,
   );
+  return { ...result, client };
 }
 
 function renderRoute(ui: React.ReactNode, path: string, routePath: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const result = render(
     <QueryClientProvider client={client}>
       <ProfileProvider>
         <MemoryRouter initialEntries={[path]}>
           <Routes>
             <Route path={routePath} element={ui} />
             <Route path="/select" element={<div>profile-select</div>} />
-            <Route path="/app/:profileId/quiz" element={<div>quiz-route</div>} />
+            <Route path="/app/:profileId/quiz" element={<QuizRouteProbe />} />
           </Routes>
         </MemoryRouter>
       </ProfileProvider>
     </QueryClientProvider>,
   );
+  return { ...result, client };
+}
+
+function QuizRouteProbe() {
+  const location = useLocation();
+  return (
+    <>
+      <div>quiz-route</div>
+      <output aria-label="测试路由状态">{JSON.stringify(location.state)}</output>
+    </>
+  );
+}
+
+function renderApp(path: string) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const result = render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return { ...result, client };
 }
 
 beforeEach(() => {
@@ -284,11 +313,18 @@ beforeEach(() => {
   ]);
   updateWordMock.mockResolvedValue({});
   deleteWordMock.mockResolvedValue({ message: "已删除" });
+  deleteLibraryMock.mockResolvedValue({ message: "已删除" });
   sessionMock.mockResolvedValue({ authenticated: true });
   logoutMock.mockResolvedValue({ message: "已退出" });
 });
 
 describe("LoginPage", () => {
+  it("keeps a single brand lockup on the login screen", () => {
+    renderRoute(<LoginPage />, "/login", "/login");
+
+    expect(screen.getAllByText("WORDNEST")).toHaveLength(1);
+  });
+
   it("only accepts four digits and announces a failed login", async () => {
     const user = userEvent.setup();
     loginMock.mockResolvedValueOnce({
@@ -308,9 +344,13 @@ describe("LoginPage", () => {
 
 describe("HomePage", () => {
   it("makes the real-sized daily challenge the primary task", async () => {
-    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+    renderApp("/app/1");
 
     expect(await screen.findByRole("heading", { name: "今日挑战" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换孩子" })).toHaveAttribute(
+      "aria-label",
+      "切换孩子",
+    );
     expect(
       await screen.findByRole("button", { name: "开始 4 词挑战" }),
     ).toBeInTheDocument();
@@ -343,10 +383,81 @@ describe("HomePage", () => {
     renderRoute(<HomePage />, "/app/1", "/app/:profileId");
 
     await screen.findByRole("button", { name: "开始 4 词挑战" });
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
     await user.click(screen.getByRole("checkbox", { name: /日常阅读/ }));
 
     expect(screen.getByText(/还没有选择挑战范围/)).toBeInTheDocument();
     expect(screen.queryByText(/词库还是空的/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "请先选择挑战范围" })).toBeDisabled();
+  });
+
+  it("excludes empty libraries from the default challenge range", async () => {
+    const user = userEvent.setup();
+    dashboardMock.mockResolvedValueOnce({
+      profile: { id: 1, slug: "brother", display_name: "哥哥" },
+      libraries: [
+        {
+          id: 10,
+          profile_id: 1,
+          name: "绘本",
+          is_default: false,
+          word_count: 0,
+          due_count: 0,
+        },
+        {
+          id: 11,
+          profile_id: 1,
+          name: "日常阅读",
+          is_default: true,
+          word_count: 4,
+          due_count: 4,
+        },
+      ],
+      total_words: 4,
+      due_words: 4,
+      mastered_words: 0,
+      reviews_7d: 0,
+      known_reviews_7d: 0,
+      steady_accuracy_7d: 0,
+      active_days_7d: 0,
+      weak_words: [],
+    });
+
+    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    const scopeToggle = await screen.findByRole("button", { name: /调整挑战范围/ });
+    expect(scopeToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("checkbox", { name: /绘本/ })).not.toBeInTheDocument();
+    expect(await screen.findByText("全部可学词库 · 4 词")).toBeInTheDocument();
+
+    await user.click(scopeToggle);
+    expect(scopeToggle).toHaveAttribute("aria-expanded", "true");
+    const emptyLibrary = screen.getByRole("checkbox", { name: /绘本/ });
+    const activeLibrary = screen.getByRole("checkbox", { name: /日常阅读/ });
+    expect(emptyLibrary).toBeDisabled();
+    expect(emptyLibrary).not.toBeChecked();
+    expect(activeLibrary).toBeChecked();
+    await waitFor(() => {
+      expect(quizPreviewMock).toHaveBeenCalledWith(1, [11], 10);
+    });
+  });
+
+  it("keeps a manually cleared range after the dashboard refreshes", async () => {
+    const user = userEvent.setup();
+    const { client } = renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    await screen.findByRole("button", { name: "开始 4 词挑战" });
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    const library = screen.getByRole("checkbox", { name: /日常阅读/ });
+    await user.click(library);
+    expect(library).not.toBeChecked();
+
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["dashboard", 1] });
+    });
+
+    await waitFor(() => expect(dashboardMock).toHaveBeenCalledTimes(2));
+    expect(library).not.toBeChecked();
     expect(screen.getByRole("button", { name: "请先选择挑战范围" })).toBeDisabled();
   });
 });
@@ -368,16 +479,101 @@ describe("RequireAuth", () => {
     await user.click(screen.getByRole("button", { name: "重新检查" }));
     expect(await screen.findByText("受保护内容")).toBeInTheDocument();
   });
+
+  it("returns an active family session to login when a protected request expires", async () => {
+    localStorage.setItem("wordnest.activeProfileId", "1");
+    const { client } = renderApp("/app/1");
+    client.setQueryData(["private-draft"], { spelling: "home" });
+    await screen.findByRole("heading", { name: "今日挑战" });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("wordnest:auth-expired"));
+    });
+
+    expect(await screen.findByRole("heading", { name: "回到词芽" })).toBeInTheDocument();
+    expect(client.getQueryData(["private-draft"])).toBeUndefined();
+    expect(localStorage.getItem("wordnest.activeProfileId")).toBeNull();
+  });
 });
 
 describe("MePage parent insights", () => {
   it("shows seven-day metrics and real weak words", async () => {
     renderRoute(<MePage />, "/app/1/me", "/app/:profileId/me");
 
-    expect(await screen.findByRole("heading", { name: "家长看板" })).toBeInTheDocument();
     expect(await screen.findByText("50%")).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "家长看板" });
+    expect(heading).toBeInTheDocument();
+    expect(
+      within(heading.closest("header") as HTMLElement).getByRole("button", {
+        name: "切换孩子，当前哥哥",
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByText("home")).toBeInTheDocument();
     expect(screen.getByText("家")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /批量录词/ })).toHaveAttribute(
+      "href",
+      "/app/1/add",
+    );
+    expect(screen.getByRole("link", { name: /拍照找词/ })).toHaveAttribute(
+      "href",
+      "/app/1/scan",
+    );
+    expect(screen.getByRole("button", { name: "退出登录" })).toHaveClass("btn-ghost");
+  });
+
+  it("turns today's due-word advice into a direct review action", async () => {
+    const user = userEvent.setup();
+    renderRoute(<MePage />, "/app/1/me", "/app/:profileId/me");
+
+    await user.click(await screen.findByRole("button", { name: "让哥哥开始复习" }));
+
+    expect(await screen.findByText("quiz-route")).toBeInTheDocument();
+    expect(screen.getByLabelText("测试路由状态")).toHaveTextContent(
+      JSON.stringify({ libraryIds: [10] }),
+    );
+  });
+
+  it("keeps a failed library deletion inside the dialog", async () => {
+    const user = userEvent.setup();
+    deleteLibraryMock.mockRejectedValueOnce(new Error("词库暂时删不掉"));
+    dashboardMock.mockResolvedValueOnce({
+      profile: { id: 1, slug: "brother", display_name: "哥哥" },
+      libraries: [
+        {
+          id: 10,
+          profile_id: 1,
+          name: "日常阅读",
+          is_default: true,
+          word_count: 4,
+          due_count: 4,
+        },
+        {
+          id: 11,
+          profile_id: 1,
+          name: "绘本",
+          is_default: false,
+          word_count: 0,
+          due_count: 0,
+        },
+      ],
+      total_words: 4,
+      due_words: 4,
+      mastered_words: 0,
+      reviews_7d: 2,
+      known_reviews_7d: 1,
+      steady_accuracy_7d: 50,
+      active_days_7d: 1,
+      weak_words: [],
+    });
+    renderRoute(<MePage />, "/app/1/me", "/app/:profileId/me");
+
+    await user.click(await screen.findByRole("button", { name: "删除" }));
+    const dialog = screen.getByRole("alertdialog", { name: "删除 绘本？" });
+    await user.click(within(dialog).getByRole("button", { name: "确认删除" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("词库暂时删不掉");
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(deleteLibraryMock).toHaveBeenCalledWith(1, 11, false);
   });
 
   it("does not turn a loading failure into a false learning recommendation", async () => {
@@ -407,19 +603,141 @@ describe("MePage parent insights", () => {
 });
 
 describe("WordsPage compact management", () => {
-  it("keeps word details collapsed until the parent asks to manage one", async () => {
+  it("makes the compact row expandable and keeps pronunciation one tap away", async () => {
     const user = userEvent.setup();
     renderRoute(<WordsPage />, "/app/1/words", "/app/:profileId/words");
 
-    expect(await screen.findByRole("heading", { name: "home" })).toBeInTheDocument();
+    expect(await screen.findByText("home")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "录新词" })).toHaveAttribute(
+      "aria-label",
+      "录新词",
+    );
     const details = screen.getByRole("button", { name: "查看 home 详情" });
     expect(details).toHaveAttribute("aria-expanded", "false");
+    expect(details).toHaveClass("word-summary-toggle");
+    expect(screen.getByRole("button", { name: "朗读 home" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "朗读单词" })).not.toBeInTheDocument();
 
     await user.click(details);
     expect(details).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "朗读单词" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "编辑 home" })).toBeInTheDocument();
+  });
+
+  it("uses an in-product confirmation before deleting a word", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("confirm", vi.fn(() => false));
+    renderRoute(<WordsPage />, "/app/1/words", "/app/:profileId/words");
+
+    await user.click(await screen.findByRole("button", { name: "查看 home 详情" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
+
+    const dialog = screen.getByRole("alertdialog", { name: "删除 home？" });
+    const cancel = screen.getByRole("button", { name: "先不删" });
+    const confirmDelete = screen.getByRole("button", { name: "确认删除" });
+    expect(dialog).toBeInTheDocument();
+    expect(cancel).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(confirmDelete).toHaveFocus();
+    await user.tab();
+    expect(cancel).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(dialog).not.toBeInTheDocument();
+    expect(deleteWordMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed deletion visible inside the dialog and restores page scrolling", async () => {
+    const user = userEvent.setup();
+    const previousOverflow = document.body.style.overflow;
+    let scrollY = 240;
+    const scrollYSpy = vi.spyOn(window, "scrollY", "get").mockImplementation(() => scrollY);
+    const scrollToSpy = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+    let rejectDelete: (reason: Error) => void = () => undefined;
+    deleteWordMock.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectDelete = reject;
+    }));
+    renderRoute(<WordsPage />, "/app/1/words", "/app/:profileId/words");
+
+    await user.click(await screen.findByRole("button", { name: "查看 home 详情" }));
+    const deleteTrigger = screen.getByRole("button", { name: "删除" });
+    await user.click(deleteTrigger);
+    const dialog = screen.getByRole("alertdialog", { name: "删除 home？" });
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await user.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    document.body.tabIndex = -1;
+    document.body.focus();
+    expect(document.body).toHaveFocus();
+    await act(async () => {
+      rejectDelete(new Error("服务器正忙，请稍后重试"));
+    });
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("服务器正忙");
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "先不删" })).toHaveFocus();
+    scrollY = 315;
+    await user.click(within(dialog).getByRole("button", { name: "先不删" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe(previousOverflow);
+    expect(deleteTrigger).toHaveFocus();
+    expect(scrollToSpy).toHaveBeenLastCalledWith({
+      left: 0,
+      top: 240,
+      behavior: "auto",
+    });
+    scrollYSpy.mockRestore();
+    scrollToSpy.mockRestore();
+    document.body.removeAttribute("tabindex");
+  });
+
+  it("discards an unfinished edit when the parent opens another word", async () => {
+    const user = userEvent.setup();
+    wordsMock.mockResolvedValueOnce([
+      {
+        id: 11,
+        profile_id: 1,
+        spelling: "home",
+        normalized_spelling: "home",
+        meaning_zh: "家",
+        part_of_speech: "n.",
+        ipa: "/hoʊm/",
+        syllables: "home",
+        example_en: "I am home.",
+        example_zh: "我到家了。",
+        is_mastered: false,
+        library_ids: [10],
+        progress: { familiarity: 1, review_count: 2 },
+      },
+      {
+        id: 12,
+        profile_id: 1,
+        spelling: "moon",
+        normalized_spelling: "moon",
+        meaning_zh: "月亮",
+        part_of_speech: "n.",
+        ipa: "/muːn/",
+        syllables: "moon",
+        example_en: "The moon is bright.",
+        example_zh: "月亮很亮。",
+        is_mastered: false,
+        library_ids: [10],
+        progress: { familiarity: 0, review_count: 0 },
+      },
+    ]);
+    renderRoute(<WordsPage />, "/app/1/words", "/app/:profileId/words");
+
+    await user.click(await screen.findByRole("button", { name: "查看 home 详情" }));
+    await user.click(screen.getByRole("button", { name: "编辑 home" }));
+    const meaning = screen.getByLabelText("中文意思");
+    await user.clear(meaning);
+    await user.type(meaning, "房子");
+
+    await user.click(screen.getByRole("button", { name: "查看 moon 详情" }));
+    await user.click(screen.getByRole("button", { name: "查看 home 详情" }));
+
+    expect(screen.queryByLabelText("中文意思")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "编辑 home" }));
+    expect(screen.getByLabelText("中文意思")).toHaveValue("家");
   });
 
   it("does not describe a request failure as an empty word library", async () => {
@@ -440,6 +758,25 @@ describe("SyllableTrack", () => {
     expect(screen.getByText("beau")).toBeInTheDocument();
     expect(screen.getByText("ti")).toBeInTheDocument();
     expect(screen.getByText("ful")).toBeInTheDocument();
+  });
+
+  it("can use the whole syllable track as the pronunciation target", async () => {
+    const user = userEvent.setup();
+    const onActivate = vi.fn();
+    render(
+      <SyllableTrack
+        syllables="home"
+        fallback="home"
+        playing={false}
+        onActivate={onActivate}
+        ariaLabel="朗读 home 音节"
+      />,
+    );
+
+    const track = screen.getByRole("button", { name: "朗读 home 音节" });
+    expect(track).toHaveClass("is-single");
+    await user.click(track);
+    expect(onActivate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -755,7 +1092,8 @@ describe("ScanPage", () => {
 describe("QuizPage", () => {
   it("gives options, feedback and an explicit next button", async () => {
     const user = userEvent.setup();
-    wrap(<QuizPage />, "/app/1/quiz");
+    const { client } = wrap(<QuizPage />, "/app/1/quiz");
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
 
     expect(await screen.findByText("apple")).toBeInTheDocument();
     const options = screen.getByRole("group", { name: "选择中文意思" });
@@ -770,10 +1108,16 @@ describe("QuizPage", () => {
     expect(screen.getByText(/答对了/)).toBeInTheDocument();
     expect(screen.getByText("I eat an apple every morning.")).toBeInTheDocument();
     expect(screen.getByText("我每天早上吃一个苹果。")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveFocus();
+    });
 
     await user.click(screen.getByRole("button", { name: "下一个" }));
     await waitFor(() => {
       expect(rateQuizMock).toHaveBeenCalledWith(1, 11, "known");
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["dashboard", 1] });
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["quiz-preview", 1] });
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["words", 1] });
     });
 
     // 自动进入下一题，且选项恢复可点
@@ -803,7 +1147,7 @@ describe("QuizPage", () => {
     wrap(<QuizPage />, "/app/1/quiz");
 
     await user.click(await screen.findByRole("button", { name: "苹果" }));
-    await user.click(screen.getByRole("button", { name: /刚才是猜的/ }));
+    await user.click(screen.getByRole("button", { name: /其实是蒙的/ }));
     await user.click(screen.getByRole("button", { name: "下一个" }));
     await waitFor(() => {
       expect(rateQuizMock).toHaveBeenCalledWith(1, 11, "familiar");
