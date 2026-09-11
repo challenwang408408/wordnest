@@ -873,6 +873,44 @@ describe("BottomNav profile routing", () => {
 });
 
 describe("AddWordPage", () => {
+  it("enriches and saves take off as one phrase", async () => {
+    const user = userEvent.setup();
+    enrichBatchMock.mockResolvedValueOnce({
+      items: [{
+        spelling: "take off", meaning_zh: "起飞", part_of_speech: "phr. v.",
+        ipa: "/teɪk ɔːf/", syllables: "take off",
+        example_en: "The plane will take off.", example_zh: "飞机将要起飞。",
+      }],
+    });
+    wrap(<AddWordPage />, "/app/1/add");
+    await user.type(await screen.findByLabelText("英语单词"), "take off");
+    await user.click(screen.getByRole("button", { name: "统一补全" }));
+    expect(await screen.findByDisplayValue("起飞")).toBeInTheDocument();
+    expect(enrichBatchMock).toHaveBeenCalledWith(1, ["take off"]);
+    expect(screen.getAllByRole("checkbox", { name: /^保存 / })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: /保存勾选的 1 个词/ }));
+    await waitFor(() => expect(createWordsBatchMock).toHaveBeenCalledWith(1, [
+      expect.objectContaining({ spelling: "take off", meaning_zh: "起飞", library_ids: [10] }),
+    ]));
+    expect(await screen.findByText("words-list")).toBeInTheDocument();
+  });
+
+  it("keeps the whole phrase editable and saveable if enrichment fails", async () => {
+    const user = userEvent.setup();
+    enrichBatchMock.mockRejectedValueOnce(new Error("补全失败"));
+    wrap(<AddWordPage />, "/app/1/add");
+    await user.type(await screen.findByLabelText("英语单词"), "take off");
+    await user.click(screen.getByRole("button", { name: "统一补全" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("补全失败");
+    expect(screen.getByRole("checkbox", { name: "保存 take off" })).toBeChecked();
+    expect(screen.getAllByRole("checkbox", { name: /^保存 / })).toHaveLength(1);
+    await user.type(screen.getByLabelText("中文意思"), "起飞");
+    await user.click(screen.getByRole("button", { name: /保存勾选的 1 个词/ }));
+    await waitFor(() => expect(createWordsBatchMock).toHaveBeenCalledWith(1, [
+      expect.objectContaining({ spelling: "take off", meaning_zh: "起飞" }),
+    ]));
+  });
+
   it("batch enriches then saves selected words", async () => {
     const user = userEvent.setup();
     wrap(<AddWordPage />, "/app/1/add");

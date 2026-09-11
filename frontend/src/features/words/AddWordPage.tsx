@@ -17,11 +17,11 @@ const emptyFields = {
   example_zh: "",
 };
 
-/** 按换行 / 逗号 / 空白拆词，去空去重，最多 20 个。 */
+/** 按换行 / 逗号 / 分号 / 制表符分项，保留词组内空格，去重后最多 20 项。 */
 export function parseSpellings(raw: string): string[] {
   const parts = raw
-    .split(/[\n,，;；\t ]+/)
-    .map((s) => s.trim())
+    .split(/[\r\n,，;；\t]+/)
+    .map((s) => s.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   const seen = new Set<string>();
   const out: string[] = [];
@@ -131,7 +131,7 @@ export function AddWordPage() {
     e.preventDefault();
     const spellings = parseSpellings(input);
     if (spellings.length === 0) {
-      setError("请至少输入一个英语单词");
+      setError("请至少输入一个英语单词或词组");
       return;
     }
     enrich.mutate(spellings);
@@ -156,7 +156,7 @@ export function AddWordPage() {
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div>
           <h1 className="page-title">录单词</h1>
-          <p className="page-sub">可一次输入多个词，统一补全后再保存。</p>
+          <p className="page-sub">可输入单词或词组，统一补全后再保存。</p>
         </div>
         <Link className="btn btn-ghost" to={`/app/${profileId}`}>
           返回
@@ -191,7 +191,7 @@ export function AddWordPage() {
             id="spellings"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={"一行一个，或用逗号/空格分隔\n例如：\nbeautiful\nhappy\napple"}
+            placeholder={"一行一个单词或词组，也可用逗号分隔\n例如：\ntake off\nlook after\napple"}
             rows={5}
             required
           />
@@ -240,7 +240,7 @@ export function AddWordPage() {
           <p className="voice-message is-error" role="alert">{voice.error}</p>
         ) : null}
         <p className="muted" style={{ margin: 0 }}>
-          最多 20 个；重复拼写会自动去掉。
+          用换行或逗号分隔，词组内保留空格。最多 20 个；重复拼写会自动去掉。
         </p>
         <button className="btn btn-primary" type="submit" disabled={enrich.isPending}>
           {enrich.isPending ? "正在统一补全…" : "统一补全"}
