@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { SyllableTrack } from "../components/SyllableTrack";
 import { BottomNav } from "../components/BottomNav";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -36,6 +36,7 @@ const deleteWordMock = vi.fn();
 const deleteLibraryMock = vi.fn();
 const sessionMock = vi.fn();
 const logoutMock = vi.fn();
+const updateSettingsMock = vi.fn();
 
 vi.mock("../api/client", () => ({
   AUTH_EXPIRED_EVENT: "wordnest:auth-expired",
@@ -59,6 +60,7 @@ vi.mock("../api/client", () => ({
     deleteLibrary: (...args: unknown[]) => deleteLibraryMock(...args),
     session: (...args: unknown[]) => sessionMock(...args),
     logout: (...args: unknown[]) => logoutMock(...args),
+    updateSettings: (...args: unknown[]) => updateSettingsMock(...args),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -137,6 +139,15 @@ function QuizRouteProbe() {
       <output aria-label="测试路由状态">{JSON.stringify(location.state)}</output>
     </>
   );
+}
+
+/** 倒计时逐秒推进，每秒之间让 React 渲染一次，和孩子在屏幕上看到的一样 */
+async function advanceSeconds(seconds: number) {
+  for (let i = 0; i < seconds; i += 1) {
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+  }
 }
 
 function renderApp(path: string) {
@@ -275,6 +286,9 @@ beforeEach(() => {
         due_count: 4,
       },
     ],
+    daily_quiz_count: 10,
+    frequent_mistake_threshold: 2,
+    frequent_mistake_words: 3,
     total_words: 4,
     due_words: 4,
     mastered_words: 0,
@@ -309,6 +323,7 @@ beforeEach(() => {
       is_mastered: false,
       library_ids: [10],
       progress: { familiarity: 1, review_count: 2 },
+      wrong_count: 3,
     },
   ]);
   updateWordMock.mockResolvedValue({});
@@ -357,8 +372,61 @@ describe("HomePage", () => {
     expect(screen.getByRole("heading", { name: "家长工具" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /批量录词/ })).toBeInTheDocument();
     await waitFor(() => {
-      expect(quizPreviewMock).toHaveBeenCalledWith(1, [10], 10);
+      expect(quizPreviewMock).toHaveBeenCalledWith(1, { library_ids: [10] });
     });
+  });
+
+  it("offers frequent mistakes as an exclusive challenge range", async () => {
+    const user = userEvent.setup();
+    quizPreviewMock.mockImplementation((_profileId: number, scope: { frequent_mistakes?: boolean }) =>
+      Promise.resolve(scope.frequent_mistakes
+        ? { available_count: 3, challenge_count: 3 }
+        : { available_count: 4, challenge_count: 4 }),
+    );
+    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    await screen.findByRole("button", { name: "开始 4 词挑战" });
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    const frequent = screen.getByRole("checkbox", { name: /高频错题/ });
+    expect(frequent).not.toBeChecked();
+    expect(screen.getByText("错过 2 次以上，单独专练")).toBeInTheDocument();
+
+    await user.click(frequent);
+    expect(frequent).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /日常阅读/ })).not.toBeChecked();
+    await waitFor(() => {
+      expect(quizPreviewMock).toHaveBeenLastCalledWith(1, { frequent_mistakes: true });
+    });
+    await user.click(await screen.findByRole("button", { name: "开始 3 个错题专练" }));
+    expect(await screen.findByText("quiz-route")).toBeInTheDocument();
+    expect(screen.getByLabelText("测试路由状态")).toHaveTextContent(
+      JSON.stringify({ frequentMistakes: true }),
+    );
+  });
+
+  it("goes back to all libraries when frequent mistakes is turned off", async () => {
+    const user = userEvent.setup();
+    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    await screen.findByRole("button", { name: "开始 4 词挑战" });
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    await user.click(screen.getByRole("checkbox", { name: /日常阅读/ }));
+    await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
+    await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
+    expect(screen.getByRole("checkbox", { name: /日常阅读/ })).toBeChecked();
+  });
+
+  it("disables frequent mistakes when there are none yet", async () => {
+    const user = userEvent.setup();
+    dashboardMock.mockResolvedValue({
+      ...(await dashboardMock()),
+      frequent_mistake_words: 0,
+    });
+    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    await screen.findByRole("button", { name: "开始 4 词挑战" });
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    expect(screen.getByRole("checkbox", { name: /高频错题/ })).toBeDisabled();
   });
 
   it("keeps a preview failure distinct from a truly empty library", async () => {
@@ -413,6 +481,9 @@ describe("HomePage", () => {
           due_count: 4,
         },
       ],
+      daily_quiz_count: 10,
+      frequent_mistake_threshold: 2,
+      frequent_mistake_words: 0,
       total_words: 4,
       due_words: 4,
       mastered_words: 0,
@@ -438,7 +509,7 @@ describe("HomePage", () => {
     expect(emptyLibrary).not.toBeChecked();
     expect(activeLibrary).toBeChecked();
     await waitFor(() => {
-      expect(quizPreviewMock).toHaveBeenCalledWith(1, [11], 10);
+      expect(quizPreviewMock).toHaveBeenCalledWith(1, { library_ids: [11] });
     });
   });
 
@@ -521,6 +592,48 @@ describe("MePage parent insights", () => {
     expect(screen.getByRole("button", { name: "退出登录" })).toHaveClass("btn-ghost");
   });
 
+  it("lets the parent pick the daily challenge size from five levels", async () => {
+    const user = userEvent.setup();
+    updateSettingsMock.mockResolvedValue({ daily_quiz_count: 30 });
+    const { client } = renderRoute(<MePage />, "/app/1/me", "/app/:profileId/me");
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    const picker = await screen.findByRole("radiogroup", { name: "每日挑战题量" });
+    const options = within(picker).getAllByRole("radio");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "10个词",
+      "20个词",
+      "30个词",
+      "40个词",
+      "50个词",
+    ]);
+    expect(within(picker).getByRole("radio", { name: "每次 10 个词" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    await user.click(within(picker).getByRole("radio", { name: "每次 30 个词" }));
+    await waitFor(() => {
+      expect(updateSettingsMock).toHaveBeenCalledWith(1, 30);
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["dashboard", 1] });
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["quiz-preview", 1] });
+    });
+  });
+
+  it("keeps the saved daily size and shows why when saving fails", async () => {
+    const user = userEvent.setup();
+    updateSettingsMock.mockRejectedValue(new Error("网络断了"));
+    renderRoute(<MePage />, "/app/1/me", "/app/:profileId/me");
+
+    const picker = await screen.findByRole("radiogroup", { name: "每日挑战题量" });
+    await user.click(within(picker).getByRole("radio", { name: "每次 50 个词" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("网络断了");
+    expect(within(picker).getByRole("radio", { name: "每次 10 个词" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
   it("turns today's due-word advice into a direct review action", async () => {
     const user = userEvent.setup();
     renderRoute(<MePage />, "/app/1/me", "/app/:profileId/me");
@@ -556,6 +669,9 @@ describe("MePage parent insights", () => {
           due_count: 0,
         },
       ],
+      daily_quiz_count: 10,
+      frequent_mistake_threshold: 2,
+      frequent_mistake_words: 0,
       total_words: 4,
       due_words: 4,
       mastered_words: 0,
@@ -738,6 +854,22 @@ describe("WordsPage compact management", () => {
     expect(screen.queryByLabelText("中文意思")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "编辑 home" }));
     expect(screen.getByLabelText("中文意思")).toHaveValue("家");
+  });
+
+  it("sorts by lifetime mistakes and shows how often each word was missed", async () => {
+    const user = userEvent.setup();
+    renderRoute(<WordsPage />, "/app/1/words", "/app/:profileId/words");
+
+    expect(await screen.findByLabelText("累计错 3 次")).toHaveTextContent("错 3");
+    await user.selectOptions(screen.getByRole("combobox", { name: "单词排序" }), "wrong_count");
+    await waitFor(() => {
+      expect(wordsMock).toHaveBeenLastCalledWith(1, {
+        q: undefined,
+        library_id: undefined,
+        status: undefined,
+        sort: "wrong_count",
+      });
+    });
   });
 
   it("does not describe a request failure as an empty word library", async () => {
@@ -1167,16 +1299,60 @@ describe("QuizPage", () => {
     expect(await screen.findByText(/本轮 2 题，答对 2 题/)).toBeInTheDocument();
   });
 
-  it("marks a wrong pick as unknown and shows the real meaning", async () => {
+  it("holds a wrong answer for five seconds on a study card before moving on", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      wrap(<QuizPage />, "/app/1/quiz");
+
+      await user.click(await screen.findByRole("button", { name: "小狗" }));
+      const study = screen.getByRole("status");
+      expect(study).toHaveTextContent("选错了，先把它看清楚");
+      expect(study).toHaveTextContent("你选的「小狗」不是它的意思");
+      expect(within(study).getByText("苹果")).toBeInTheDocument();
+      expect(within(study).getByText("n.")).toBeInTheDocument();
+      expect(within(study).getByText("apple", { selector: "mark" })).toBeInTheDocument();
+      expect(study).toHaveTextContent("我每天早上吃一个苹果。");
+
+      const locked = screen.getByRole("button", { name: "先看清楚，还要 5 秒" });
+      expect(locked).toBeDisabled();
+      await user.click(locked);
+      expect(rateQuizMock).not.toHaveBeenCalled();
+
+      await advanceSeconds(4);
+      expect(screen.getByRole("button", { name: "先看清楚，还要 1 秒" })).toBeDisabled();
+
+      await advanceSeconds(1);
+      await user.click(screen.getByRole("button", { name: "记住了，下一个" }));
+      await waitFor(() => {
+        expect(rateQuizMock).toHaveBeenCalledWith(1, 11, "unknown");
+      });
+      // 下一题重新开始，不继承上一题的锁
+      expect(await screen.findByRole("heading", { name: "moon" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "月亮" }));
+      expect(screen.getByRole("button", { name: "看看结果" })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not lock a correct answer", async () => {
     const user = userEvent.setup();
     wrap(<QuizPage />, "/app/1/quiz");
 
-    await user.click(await screen.findByRole("button", { name: "小狗" }));
-    expect(screen.getByText(/它的意思是「苹果」/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "苹果" }));
+    expect(screen.queryByText("选错了，先把它看清楚")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一个" })).toBeEnabled();
+  });
 
-    await user.click(screen.getByRole("button", { name: "下一个" }));
-    await waitFor(() => {
-      expect(rateQuizMock).toHaveBeenCalledWith(1, 11, "unknown");
+  it("asks the server for the parent's daily count and the frequent-mistake scope", async () => {
+    wrap(<QuizPage />, "/app/1/quiz", { frequentMistakes: true });
+
+    await screen.findByRole("heading", { name: "apple" });
+    expect(startQuizMock).toHaveBeenCalledWith(1, {
+      library_ids: [],
+      word_ids: [],
+      frequent_mistakes: true,
     });
   });
 
@@ -1205,11 +1381,16 @@ describe("QuizPage", () => {
   });
 
   it("starts a focused retry with only the words that need another look", async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     wrap(<QuizPage />, "/app/1/quiz");
 
     await user.click(await screen.findByRole("button", { name: "小狗" }));
-    await user.click(screen.getByRole("button", { name: "下一个" }));
+    await advanceSeconds(5);
+    await user.click(screen.getByRole("button", { name: "记住了，下一个" }));
     await user.click(await screen.findByRole("button", { name: "月亮" }));
     await user.click(screen.getByRole("button", { name: "看看结果" }));
     await user.click(
@@ -1217,7 +1398,11 @@ describe("QuizPage", () => {
     );
 
     await waitFor(() => {
-      expect(startQuizMock).toHaveBeenLastCalledWith(1, [], 10, [11]);
+      expect(startQuizMock).toHaveBeenLastCalledWith(1, {
+        library_ids: [],
+        word_ids: [11],
+        frequent_mistakes: false,
+      });
     });
   });
 });

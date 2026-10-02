@@ -792,3 +792,135 @@ def test_prepare_image_data_url_resizes() -> None:
 
     img = Image.open(BytesIO(base64.b64decode(raw)))
     assert max(img.size) <= 800
+
+
+def _add_word(client: TestClient, pid: int, spelling: str) -> dict:
+    lib_id = client.get(f"/api/wordnest/profiles/{pid}/libraries").json()[0]["id"]
+    return client.post(
+        f"/api/wordnest/profiles/{pid}/words",
+        json={"spelling": spelling, "meaning_zh": f"{spelling}义", "library_ids": [lib_id]},
+    ).json()
+
+
+def _rate(client: TestClient, pid: int, word_id: int, rating: str, times: int = 1) -> None:
+    for _ in range(times):
+        resp = client.post(
+            f"/api/wordnest/profiles/{pid}/quiz/{word_id}/rate", json={"rating": rating}
+        )
+        assert resp.status_code == 200
+
+
+def test_daily_quiz_count_is_a_per_profile_parent_setting(
+    auth_client: TestClient, profiles: dict[str, int]
+) -> None:
+    brother, sister = profiles["brother"], profiles["sister"]
+    base = "/api/wordnest/profiles"
+    assert auth_client.get(f"{base}/{brother}/dashboard").json()["daily_quiz_count"] == 10
+
+    saved = auth_client.patch(f"{base}/{brother}/settings", json={"daily_quiz_count": 30})
+    assert saved.status_code == 200
+    assert saved.json() == {"daily_quiz_count": 30}
+    assert auth_client.get(f"{base}/{brother}/dashboard").json()["daily_quiz_count"] == 30
+    assert auth_client.get(f"{base}/{sister}/dashboard").json()["daily_quiz_count"] == 10
+
+    for invalid in (25, 0, 60):
+        rejected = auth_client.patch(
+            f"{base}/{brother}/settings", json={"daily_quiz_count": invalid}
+        )
+        assert rejected.status_code == 422
+    assert auth_client.get(f"{base}/{brother}/dashboard").json()["daily_quiz_count"] == 30
+
+
+def test_quiz_uses_daily_setting_when_count_is_omitted(
+    auth_client: TestClient, profiles: dict[str, int]
+) -> None:
+    pid = profiles["brother"]
+    words = [_add_word(auth_client, pid, f"word{i:02d}") for i in range(25)]
+    auth_client.patch(f"/api/wordnest/profiles/{pid}/settings", json={"daily_quiz_count": 20})
+
+    preview = auth_client.post(f"/api/wordnest/profiles/{pid}/quiz/preview", json={})
+    assert preview.json() == {"available_count": 25, "challenge_count": 20}
+    started = auth_client.post(f"/api/wordnest/profiles/{pid}/quiz/start", json={})
+    assert started.json()["total"] == 20
+
+    # 指定词重练时按词数出题，不被每日题量截断
+    retry_ids = [word["id"] for word in words[:12]]
+    auth_client.patch(f"/api/wordnest/profiles/{pid}/settings", json={"daily_quiz_count": 10})
+    retry = auth_client.post(
+        f"/api/wordnest/profiles/{pid}/quiz/start", json={"word_ids": retry_ids}
+    )
+    assert sorted(word["id"] for word in retry.json()["words"]) == sorted(retry_ids)
+
+
+def test_words_report_lifetime_wrong_count_and_sort_by_it(
+    auth_client: TestClient, profiles: dict[str, int]
+) -> None:
+    from backend.app import database as db_module
+    from backend.app.models import ReviewEvent
+
+    pid = profiles["brother"]
+    once = _add_word(auth_client, pid, "once")
+    often = _add_word(auth_client, pid, "often")
+    never = _add_word(auth_client, pid, "never")
+    _rate(auth_client, pid, once["id"], "unknown")
+    _rate(auth_client, pid, often["id"], "unknown", times=2)
+    _rate(auth_client, pid, never["id"], "known", times=2)
+    _rate(auth_client, pid, never["id"], "familiar")
+    with db_module.SessionLocal() as db:
+        # 很久以前的错误也要算进去
+        db.add(
+            ReviewEvent(
+                profile_id=pid,
+                word_id=often["id"],
+                rating="unknown",
+                reviewed_at=datetime.now(timezone.utc) - timedelta(days=120),
+            )
+        )
+        db.commit()
+
+    listed = auth_client.get(f"/api/wordnest/profiles/{pid}/words").json()
+    counts = {word["spelling"]: word["wrong_count"] for word in listed}
+    assert counts == {"once": 1, "often": 3, "never": 0}
+
+    ranked = auth_client.get(
+        f"/api/wordnest/profiles/{pid}/words", params={"sort": "wrong_count"}
+    ).json()
+    assert [word["spelling"] for word in ranked] == ["often", "once", "never"]
+
+    invalid = auth_client.get(
+        f"/api/wordnest/profiles/{pid}/words", params={"sort": "random"}
+    )
+    assert invalid.status_code == 422
+
+
+def test_frequent_mistakes_scope_targets_words_missed_twice_or_more(
+    auth_client: TestClient, profiles: dict[str, int]
+) -> None:
+    brother, sister = profiles["brother"], profiles["sister"]
+    zero = _add_word(auth_client, brother, "zero")
+    one = _add_word(auth_client, brother, "one")
+    two = _add_word(auth_client, brother, "two")
+    three = _add_word(auth_client, brother, "three")
+    mastered = _add_word(auth_client, brother, "mastered")
+    _rate(auth_client, brother, one["id"], "unknown")
+    _rate(auth_client, brother, two["id"], "unknown", times=2)
+    _rate(auth_client, brother, three["id"], "unknown", times=3)
+    _rate(auth_client, brother, mastered["id"], "unknown", times=2)
+    auth_client.patch(
+        f"/api/wordnest/profiles/{brother}/words/{mastered['id']}", json={"is_mastered": True}
+    )
+    sister_word = _add_word(auth_client, sister, "foreign")
+    _rate(auth_client, sister, sister_word["id"], "unknown", times=4)
+
+    dashboard = auth_client.get(f"/api/wordnest/profiles/{brother}/dashboard").json()
+    assert dashboard["frequent_mistake_threshold"] == 2
+    assert dashboard["frequent_mistake_words"] == 2
+
+    body = {"frequent_mistakes": True}
+    preview = auth_client.post(f"/api/wordnest/profiles/{brother}/quiz/preview", json=body)
+    assert preview.json() == {"available_count": 2, "challenge_count": 2}
+    started = auth_client.post(f"/api/wordnest/profiles/{brother}/quiz/start", json=body)
+    assert sorted(word["id"] for word in started.json()["words"]) == sorted(
+        [two["id"], three["id"]]
+    )
+    assert zero["id"] not in [word["id"] for word in started.json()["words"]]

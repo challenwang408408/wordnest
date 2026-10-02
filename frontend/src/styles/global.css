@@ -591,9 +591,13 @@ button.syllable-track {
 
 .word-filter-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   margin-top: 14px;
+}
+
+.word-filter-grid .field {
+  min-width: 0;
 }
 
 .word-filters .field > span,
@@ -604,6 +608,8 @@ button.syllable-track {
 }
 
 .word-filter-grid select {
+  width: 100%;
+  min-width: 0;
   min-height: 48px;
   padding: 0 12px;
   border: 1px solid var(--line);
@@ -688,6 +694,33 @@ button.syllable-track {
   font-size: 0.74rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.word-list-badges {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wrong-pill {
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--ink-muted);
+  background: var(--surface-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.wrong-pill.is-frequent {
+  color: #8a3527;
+  background: var(--danger-soft);
+}
+
+.word-filter-grid .word-sort-field {
+  grid-column: 1 / -1;
 }
 
 .status-pill.is-mastered {
@@ -1039,6 +1072,38 @@ button.syllable-track {
   width: 18px;
   height: 18px;
   accent-color: var(--hero-blue);
+}
+
+.library-picker .checkbox-row.scope-frequent {
+  margin-bottom: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.scope-frequent__copy {
+  display: grid;
+  gap: 1px;
+}
+
+.scope-frequent__copy > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 650;
+}
+
+.scope-frequent__copy svg {
+  color: var(--coral);
+}
+
+.scope-frequent__copy small {
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+}
+
+/* 选了高频错题时，词库勾选让位，但仍可点击切回 */
+.library-picker .checkbox-row.is-inactive:not(.is-disabled) {
+  color: var(--ink-soft);
 }
 
 .scope-disclosure {
@@ -1437,6 +1502,169 @@ button.syllable-track {
   font-size: 1.05rem;
 }
 
+/* 答错锁定：按钮底部的蓝条随倒计时缩短，让孩子看到还要等多久 */
+.quiz-next.is-locked,
+.quiz-next.is-locked:disabled {
+  position: relative;
+  overflow: hidden;
+  color: var(--ink-muted);
+  background: var(--surface-subtle);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.quiz-next.is-locked::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 4px;
+  width: var(--study-progress, 0%);
+  background: var(--hero-blue);
+  transition: width 1s linear;
+}
+
+.word-study {
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--coral) 30%, white);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+}
+
+.word-study:focus {
+  outline: none;
+}
+
+.word-study__head {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  color: #8a3527;
+}
+
+.word-study__head strong {
+  display: block;
+  font-size: 1rem;
+}
+
+.word-study__head p {
+  margin: 2px 0 0;
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.study-ring {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+}
+
+.study-ring svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+
+.study-ring circle {
+  fill: none;
+  stroke-width: 4;
+}
+
+.study-ring__track {
+  stroke: color-mix(in srgb, var(--coral) 18%, white);
+}
+
+.study-ring__fill {
+  stroke: var(--coral);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+
+.study-ring b {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+}
+
+.study-ring.is-done b {
+  color: var(--success);
+}
+
+.word-study__body {
+  margin: 14px 0 0;
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.word-study__body dt {
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.word-study__body dd {
+  margin: 4px 0 0;
+}
+
+.word-study__meaning dd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.word-study__meaning span {
+  color: #126047;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.word-study__meaning small {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.word-study__en {
+  margin: 0;
+  font-family: var(--font-en);
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.word-study__en mark {
+  padding: 0 3px;
+  border-radius: 5px;
+  color: var(--hero-blue);
+  background: var(--hero-blue-soft);
+  font-weight: 700;
+}
+
+.word-study__zh {
+  margin: 4px 0 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+.word-study__empty {
+  color: var(--ink-muted);
+  font-size: 0.88rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiz-next.is-locked::after,
+  .study-ring__fill {
+    transition: none;
+  }
+}
+
 .result-card {
   overflow: hidden;
   padding: 0 20px 22px;
@@ -1713,6 +1941,58 @@ button.syllable-track {
 
 .parent-attention__action {
   flex: none;
+}
+
+.parent-setting-copy {
+  margin: 8px 0 14px;
+  color: var(--ink-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.count-picker {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.count-option {
+  min-height: 64px;
+  padding: 8px 4px;
+  display: grid;
+  place-content: center;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.count-option strong {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+}
+
+.count-option span {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+.count-option.is-selected {
+  border-color: var(--hero-blue);
+  background: var(--hero-blue-soft);
+  color: var(--hero-blue);
+  box-shadow: inset 0 0 0 1px var(--hero-blue);
+}
+
+.count-option.is-selected span {
+  color: var(--hero-blue);
+}
+
+.count-option:disabled {
+  cursor: progress;
 }
 
 .parent-panel,

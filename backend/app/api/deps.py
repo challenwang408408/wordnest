@@ -6,8 +6,21 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from backend.app.models import Library, LibraryWord, Profile, Word, WordProgress
-from backend.app.schemas import LibraryOut, WordOut, WordProgressOut
+from backend.app.models import (
+    Library,
+    LibraryWord,
+    Profile,
+    ProfileSettings,
+    ReviewEvent,
+    Word,
+    WordProgress,
+)
+from backend.app.schemas import (
+    DEFAULT_DAILY_QUIZ_COUNT,
+    LibraryOut,
+    WordOut,
+    WordProgressOut,
+)
 
 
 def get_profile_or_404(db: Session, profile_id: int) -> Profile:
@@ -33,6 +46,34 @@ def get_word_for_profile(db: Session, profile_id: int, word_id: int) -> Word:
     if word is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="找不到这个单词")
     return word
+
+
+def daily_quiz_count(db: Session, profile_id: int) -> int:
+    settings = db.get(ProfileSettings, profile_id)
+    return settings.daily_quiz_count if settings else DEFAULT_DAILY_QUIZ_COUNT
+
+
+def wrong_counts_subquery(profile_id: int):
+    """每个词的长期累计答错次数，来自全部 review_events，不限时间窗口。"""
+    return (
+        select(
+            ReviewEvent.word_id.label("word_id"),
+            func.count().label("wrong_count"),
+        )
+        .where(ReviewEvent.profile_id == profile_id, ReviewEvent.rating == "unknown")
+        .group_by(ReviewEvent.word_id)
+        .subquery()
+    )
+
+
+def wrong_counts_for(db: Session, profile_id: int, word_ids: list[int]) -> dict[int, int]:
+    if not word_ids:
+        return {}
+    counts = wrong_counts_subquery(profile_id)
+    rows = db.execute(
+        select(counts.c.word_id, counts.c.wrong_count).where(counts.c.word_id.in_(word_ids))
+    ).all()
+    return {int(word_id): int(count) for word_id, count in rows}
 
 
 def normalize_spelling(spelling: str) -> str:
@@ -68,7 +109,7 @@ def library_to_out(db: Session, library: Library) -> LibraryOut:
     )
 
 
-def word_to_out(word: Word) -> WordOut:
+def word_to_out(word: Word, wrong_count: int = 0) -> WordOut:
     progress_out = None
     if word.progress is not None:
         progress_out = WordProgressOut.model_validate(word.progress)
@@ -86,6 +127,7 @@ def word_to_out(word: Word) -> WordOut:
         is_mastered=word.is_mastered,
         library_ids=[lw.library_id for lw in word.library_words],
         progress=progress_out,
+        wrong_count=wrong_count,
         created_at=word.created_at,
         updated_at=word.updated_at,
     )

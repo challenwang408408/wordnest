@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -14,6 +15,8 @@ from backend.app.api.deps import (
     normalize_spelling,
     sync_word_libraries,
     word_to_out,
+    wrong_counts_for,
+    wrong_counts_subquery,
 )
 from backend.app.auth import AuthDep, DbDep, SettingsDep
 from backend.app.models import LibraryWord, Word, WordProgress
@@ -35,6 +38,11 @@ from backend.app.services.ai_builder import get_ai_client
 from backend.app.services.image_prep import InvalidImageError, prepare_image_data_url
 
 router = APIRouter(prefix="/profiles/{profile_id}/words", tags=["words"])
+
+
+def _word_out(db: DbDep, profile_id: int, word_id: int) -> WordOut:
+    counts = wrong_counts_for(db, profile_id, [word_id])
+    return word_to_out(get_word_for_profile(db, profile_id, word_id), counts.get(word_id, 0))
 
 
 def _create_or_link_without_commit(
@@ -92,14 +100,21 @@ def list_words(
     q: str | None = None,
     library_id: int | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
+    sort: Literal["recent", "wrong_count"] = "recent",
 ) -> list[WordOut]:
     get_profile_or_404(db, profile_id)
+    counts = wrong_counts_subquery(profile_id)
+    wrong_count = func.coalesce(counts.c.wrong_count, 0)
     stmt = (
-        select(Word)
+        select(Word, wrong_count)
+        .outerjoin(counts, counts.c.word_id == Word.id)
         .where(Word.profile_id == profile_id)
         .options(selectinload(Word.library_words), selectinload(Word.progress))
-        .order_by(Word.updated_at.desc())
     )
+    if sort == "wrong_count":
+        stmt = stmt.order_by(wrong_count.desc(), Word.updated_at.desc())
+    else:
+        stmt = stmt.order_by(Word.updated_at.desc())
     if q:
         like = f"%{q.strip().lower()}%"
         stmt = stmt.where(
@@ -111,8 +126,8 @@ def list_words(
         stmt = stmt.where(Word.is_mastered.is_(True))
     elif status_filter == "learning":
         stmt = stmt.where(Word.is_mastered.is_(False))
-    words = list(db.scalars(stmt).unique().all())
-    return [word_to_out(w) for w in words]
+    rows = db.execute(stmt).unique().all()
+    return [word_to_out(word, int(count)) for word, count in rows]
 
 
 @router.post("", response_model=WordOut, status_code=status.HTTP_201_CREATED)
@@ -125,7 +140,7 @@ def create_or_link_word(
     get_profile_or_404(db, profile_id)
     word = _create_or_link_without_commit(db, profile_id, body)
     db.commit()
-    return word_to_out(get_word_for_profile(db, profile_id, word.id))
+    return _word_out(db, profile_id, word.id)
 
 
 @router.post("/batch", response_model=WordBatchOut, status_code=status.HTTP_201_CREATED)
@@ -152,12 +167,7 @@ def create_or_link_words_batch(
             status_code=status.HTTP_409_CONFLICT,
             detail="批量保存失败，本次没有写入任何单词",
         ) from exc
-    return WordBatchOut(
-        items=[
-            word_to_out(get_word_for_profile(db, profile_id, word_id))
-            for word_id in word_ids
-        ]
-    )
+    return WordBatchOut(items=[_word_out(db, profile_id, word_id) for word_id in word_ids])
 
 
 @router.patch("/{word_id}", response_model=WordOut)
@@ -197,7 +207,7 @@ def update_word(
             status_code=status.HTTP_409_CONFLICT,
             detail="保存失败，可能和其他单词拼写冲突",
         ) from exc
-    return word_to_out(get_word_for_profile(db, profile_id, word_id))
+    return _word_out(db, profile_id, word_id)
 
 
 @router.delete("/{word_id}", response_model=MessageOut)

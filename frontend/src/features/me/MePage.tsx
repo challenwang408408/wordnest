@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { useProfile } from "../../hooks/useProfile";
+import { DAILY_QUIZ_COUNTS } from "../../types";
 import {
   Activity,
   AlertCircle,
@@ -13,6 +14,7 @@ import {
   Gauge,
   PenLine,
   RefreshCw,
+  Target,
 } from "lucide-react";
 
 export function MePage() {
@@ -26,6 +28,7 @@ export function MePage() {
   const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: number;
     name: string;
@@ -35,6 +38,19 @@ export function MePage() {
   const dashboard = useQuery({
     queryKey: ["dashboard", profileId],
     queryFn: () => api.dashboard(profileId),
+  });
+
+  const saveDailyCount = useMutation({
+    mutationFn: (count: number) => api.updateSettings(profileId, count),
+    onSuccess: async () => {
+      setSettingsError(null);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["dashboard", profileId] }),
+        qc.invalidateQueries({ queryKey: ["quiz-preview", profileId] }),
+      ]);
+    },
+    onError: (err) =>
+      setSettingsError(err instanceof Error ? err.message : "题量保存失败，请重试"),
   });
 
   const createLib = useMutation({
@@ -191,6 +207,47 @@ export function MePage() {
           >
             让{displayName}开始复习
           </button>
+        ) : null}
+      </section>
+
+      <section className="surface parent-panel" aria-labelledby="daily-count-title">
+        <div className="parent-panel__heading">
+          <div>
+            <p className="eyebrow">学习节奏</p>
+            <h2 id="daily-count-title">每日挑战题量</h2>
+          </div>
+          <Target size={22} aria-hidden="true" />
+        </div>
+        <p className="parent-setting-copy">
+          {displayName}每次「今日挑战」做几个词。可学的词不够时，有几个就做几个。
+        </p>
+        <div className="count-picker" role="radiogroup" aria-label="每日挑战题量">
+          {DAILY_QUIZ_COUNTS.map((count) => {
+            const pending = saveDailyCount.isPending && saveDailyCount.variables === count;
+            const selected = saveDailyCount.isPending
+              ? saveDailyCount.variables === count
+              : data.daily_quiz_count === count;
+            return (
+              <button
+                key={count}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={`每次 ${count} 个词`}
+                className={selected ? "count-option is-selected" : "count-option"}
+                disabled={saveDailyCount.isPending}
+                onClick={() => {
+                  if (count !== data.daily_quiz_count) saveDailyCount.mutate(count);
+                }}
+              >
+                <strong>{count}</strong>
+                <span>{pending ? "保存中" : "个词"}</span>
+              </button>
+            );
+          })}
+        </div>
+        {settingsError ? (
+          <div className="error-banner" role="alert">{settingsError}</div>
         ) : null}
       </section>
 

@@ -3,7 +3,9 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { WordCard } from "../../components/WordCard";
+import { WordStudyCard } from "./WordStudyCard";
 import type { QuizWord, Rating } from "../../types";
+import type React from "react";
 import {
   ArrowRight,
   Check,
@@ -15,7 +17,14 @@ import {
   X,
 } from "lucide-react";
 
-type LocationState = { libraryIds?: number[]; wordIds?: number[] };
+type LocationState = {
+  libraryIds?: number[];
+  wordIds?: number[];
+  frequentMistakes?: boolean;
+};
+
+/** 答错后必须先看这么多秒，才能进入下一题 */
+export const STUDY_SECONDS = 5;
 
 export function QuizPage() {
   const { profileId: raw } = useParams();
@@ -25,6 +34,9 @@ export function QuizPage() {
   const queryClient = useQueryClient();
   const libraryIds = (location.state as LocationState | null)?.libraryIds ?? [];
   const wordIds = (location.state as LocationState | null)?.wordIds ?? [];
+  const frequentMistakes = Boolean(
+    (location.state as LocationState | null)?.frequentMistakes,
+  );
   const [index, setIndex] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
   const [rating, setRating] = useState<Rating | null>(null);
@@ -34,18 +46,30 @@ export function QuizPage() {
   const [mistakes, setMistakes] = useState<QuizWord[]>([]);
   const [done, setDone] = useState(false);
   const [words, setWords] = useState<QuizWord[]>([]);
+  const [studyLeft, setStudyLeft] = useState(0);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const answerActionsRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
 
   const start = useQuery({
-    queryKey: ["quiz", profileId, libraryIds.join(","), wordIds.join(",")],
+    queryKey: [
+      "quiz",
+      profileId,
+      libraryIds.join(","),
+      wordIds.join(","),
+      frequentMistakes,
+    ],
     queryFn: async () => {
-      const result = await api.startQuiz(profileId, libraryIds, 10, wordIds);
+      const result = await api.startQuiz(profileId, {
+        library_ids: libraryIds,
+        word_ids: wordIds,
+        frequent_mistakes: frequentMistakes,
+      });
       setWords(result.words);
       setIndex(0);
       setPicked(null);
       setRating(null);
+      setStudyLeft(0);
       setCorrectCount(0);
       setStreak(0);
       setBestStreak(0);
@@ -59,6 +83,7 @@ export function QuizPage() {
   const answered = picked !== null;
   const isCorrect = answered && picked === current?.meaning_zh;
   const isLast = index + 1 >= words.length;
+  const studyLocked = studyLeft > 0;
   const progress = words.length
     ? Math.round(((index + (answered ? 1 : 0)) / words.length) * 100)
     : 0;
@@ -81,9 +106,17 @@ export function QuizPage() {
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
         ? "auto"
         : "smooth",
-      block: "nearest",
+      // 答错时细看卡较长，从卡片顶部开始看
+      block: isCorrect ? "nearest" : "start",
     });
-  }, [answered]);
+  }, [answered, isCorrect]);
+
+  // 逐秒倒数；页面在后台时浏览器会暂停或放慢计时，倒数不会在没人看时偷偷走完
+  useEffect(() => {
+    if (studyLeft <= 0) return;
+    const timer = window.setTimeout(() => setStudyLeft((left) => left - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [studyLeft]);
 
   const submit = useMutation({
     mutationFn: ({ wordId, value }: { wordId: number; value: Rating }) =>
@@ -116,6 +149,8 @@ export function QuizPage() {
       setBestStreak((best) => Math.max(best, nextStreak));
     } else {
       setStreak(0);
+      // 在点击当下就上锁，避免渲染间隙里“下一个”还能被点到
+      setStudyLeft(STUDY_SECONDS);
       setMistakes((items) =>
         items.some((word) => word.id === current.id) ? items : [...items, current],
       );
@@ -123,7 +158,7 @@ export function QuizPage() {
   }
 
   function goNext() {
-    if (!current || rating === null) return;
+    if (!current || rating === null || studyLocked) return;
     submit.mutate({ wordId: current.id, value: rating });
   }
 
@@ -290,9 +325,9 @@ export function QuizPage() {
             ipa={current.ipa}
             syllables={current.syllables}
             meaningZh={current.meaning_zh}
-            showMeaning={answered}
-            exampleEn={answered ? current.example_en : undefined}
-            exampleZh={answered ? current.example_zh : undefined}
+            showMeaning={isCorrect}
+            exampleEn={isCorrect ? current.example_en : undefined}
+            exampleZh={isCorrect ? current.example_zh : undefined}
           />
 
           <p className="quiz-prompt">它是什么意思？选一个</p>
@@ -318,25 +353,33 @@ export function QuizPage() {
 
           {answered ? (
             <div ref={answerActionsRef} className="stack quiz-answer-actions" style={{ gap: 10 }}>
-              <div
-                ref={feedbackRef}
-                className={isCorrect ? "quiz-feedback is-ok" : "quiz-feedback is-no"}
-                role="status"
-                aria-live="polite"
-                tabIndex={-1}
-              >
-                {isCorrect ? <CheckCircle2 aria-hidden="true" /> : <CircleX aria-hidden="true" />}
-                <div>
-                  <strong>{isCorrect ? "答对了" : "没关系，记住它"}</strong>
-                  <p className={isCorrect ? "quiz-verdict ok" : "quiz-verdict no"}>
-                    {isCorrect
-                      ? streak >= 2
+              {isCorrect ? (
+                <div
+                  ref={feedbackRef}
+                  className="quiz-feedback is-ok"
+                  role="status"
+                  aria-live="polite"
+                  tabIndex={-1}
+                >
+                  <CheckCircle2 aria-hidden="true" />
+                  <div>
+                    <strong>答对了</strong>
+                    <p className="quiz-verdict ok">
+                      {streak >= 2
                         ? `已经连续答对 ${streak} 个，继续保持。`
-                        : "再读一遍这个词，然后继续。"
-                      : `它的意思是「${current.meaning_zh}」。`}
-                  </p>
+                        : "再读一遍这个词，然后继续。"}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <WordStudyCard
+                  ref={feedbackRef}
+                  word={current}
+                  picked={picked ?? ""}
+                  secondsLeft={studyLeft}
+                  totalSeconds={STUDY_SECONDS}
+                />
+              )}
               {isCorrect ? (
                 <button
                   type="button"
@@ -349,12 +392,21 @@ export function QuizPage() {
               ) : null}
               <button
                 type="button"
-                className="btn btn-primary quiz-next"
-                disabled={submit.isPending}
+                className={studyLocked ? "btn btn-primary quiz-next is-locked" : "btn btn-primary quiz-next"}
+                disabled={submit.isPending || studyLocked}
                 onClick={goNext}
+                style={studyLocked
+                  ? { "--study-progress": `${(studyLeft / STUDY_SECONDS) * 100}%` } as React.CSSProperties
+                  : undefined}
               >
-                {submit.isPending ? "正在记录…" : isLast ? "看看结果" : "下一个"}
-                {!submit.isPending ? <ArrowRight size={18} aria-hidden="true" /> : null}
+                {submit.isPending
+                  ? "正在记录…"
+                  : studyLocked
+                    ? `先看清楚，还要 ${studyLeft} 秒`
+                    : isCorrect
+                      ? isLast ? "看看结果" : "下一个"
+                      : isLast ? "记住了，看看结果" : "记住了，下一个"}
+                {!submit.isPending && !studyLocked ? <ArrowRight size={18} aria-hidden="true" /> : null}
               </button>
               {submit.error ? (
                 <div className="error-banner" role="alert">

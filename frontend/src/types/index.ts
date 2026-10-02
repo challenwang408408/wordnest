@@ -36,7 +36,11 @@ export type Word = {
   is_mastered: boolean;
   library_ids: number[];
   progress: WordProgress | null;
+  /** 长期累计答错次数，不限时间窗口 */
+  wrong_count: number;
 };
+
+export type WordSort = "recent" | "wrong_count";
 
 export type EnrichResult = {
   spelling: string;
@@ -73,9 +77,21 @@ export type QuizWord = {
 
 export type Rating = "unknown" | "familiar" | "known";
 
+export const DAILY_QUIZ_COUNTS = [10, 20, 30, 40, 50] as const;
+
+/** 出题范围：按词库、指定词重练，或长期高频错题 */
+export type QuizScope = {
+  library_ids?: number[];
+  word_ids?: number[];
+  frequent_mistakes?: boolean;
+};
+
 export type Dashboard = {
   profile: Profile;
   libraries: Library[];
+  daily_quiz_count: number;
+  frequent_mistake_threshold: number;
+  frequent_mistake_words: number;
   total_words: number;
   due_words: number;
   mastered_words: number;

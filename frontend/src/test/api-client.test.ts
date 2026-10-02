@@ -42,7 +42,7 @@ describe("API session expiry signal", () => {
       { status: 401, headers: { "Content-Type": "application/json" } },
     )));
 
-    await expect(api.startQuiz(1, [10])).rejects.toMatchObject({
+    await expect(api.startQuiz(1, { library_ids: [10] })).rejects.toMatchObject({
       status: 401,
       message: "登录已失效",
     });

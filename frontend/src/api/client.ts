@@ -4,11 +4,13 @@ import type {
   Library,
   Profile,
   QuizPreview,
+  QuizScope,
   QuizWord,
   Rating,
   ScanCandidate,
   SessionResponse,
   Word,
+  WordSort,
   VoiceTranscription,
 } from "../types";
 
@@ -71,6 +73,11 @@ export const api = {
   profiles: () => request<Profile[]>("/profiles"),
   dashboard: (profileId: number) =>
     request<Dashboard>(`/profiles/${profileId}/dashboard`),
+  updateSettings: (profileId: number, daily_quiz_count: number) =>
+    request<{ daily_quiz_count: number }>(`/profiles/${profileId}/settings`, {
+      method: "PATCH",
+      body: JSON.stringify({ daily_quiz_count }),
+    }),
   libraries: (profileId: number) =>
     request<Library[]>(`/profiles/${profileId}/libraries`),
   createLibrary: (profileId: number, name: string) =>
@@ -90,12 +97,13 @@ export const api = {
     ),
   words: (
     profileId: number,
-    params?: { q?: string; library_id?: number; status?: string },
+    params?: { q?: string; library_id?: number; status?: string; sort?: WordSort },
   ) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set("q", params.q);
     if (params?.library_id != null) qs.set("library_id", String(params.library_id));
     if (params?.status) qs.set("status", params.status);
+    if (params?.sort && params.sort !== "recent") qs.set("sort", params.sort);
     const suffix = qs.toString() ? `?${qs}` : "";
     return request<Word[]>(`/profiles/${profileId}/words${suffix}`);
   },
@@ -170,28 +178,19 @@ export const api = {
       },
     );
   },
-  startQuiz: (
-    profileId: number,
-    library_ids: number[],
-    count = 10,
-    word_ids: number[] = [],
-  ) =>
+  // 不传题量：后端按家长设置的每日题量出题，指定词重练时按词数出题
+  startQuiz: (profileId: number, scope: QuizScope) =>
     request<{ words: QuizWord[]; total: number }>(
       `/profiles/${profileId}/quiz/start`,
       {
         method: "POST",
-        body: JSON.stringify({ library_ids, word_ids, count }),
+        body: JSON.stringify(scope),
       },
     ),
-  quizPreview: (
-    profileId: number,
-    library_ids: number[],
-    count = 10,
-    word_ids: number[] = [],
-  ) =>
+  quizPreview: (profileId: number, scope: QuizScope) =>
     request<QuizPreview>(`/profiles/${profileId}/quiz/preview`, {
       method: "POST",
-      body: JSON.stringify({ library_ids, word_ids, count }),
+      body: JSON.stringify(scope),
     }),
   rateQuiz: (profileId: number, wordId: number, rating: Rating) =>
     request<{

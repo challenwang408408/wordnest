@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.api import auth, dashboard, libraries, profiles, quiz, words
+from backend.app.api import settings as settings_api
 from backend.app.auth import LoginThrottle
 from backend.app.config import get_settings
 from backend.app.database import init_db, ping_db
@@ -22,6 +23,7 @@ router.include_router(libraries.router)
 router.include_router(words.router)
 router.include_router(quiz.router)
 router.include_router(dashboard.router)
+router.include_router(settings_api.router)
 
 
 @router.get("/healthz", response_model=HealthOut)

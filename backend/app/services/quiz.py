@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from backend.app.models import LibraryWord, Word, WordProgress
+from backend.app.models import LibraryWord, ReviewEvent, Word, WordProgress
 from backend.app.schemas import Rating
 
 RATING_DELTAS: dict[Rating, tuple[int, int, timedelta | None]] = {
@@ -50,11 +50,13 @@ def select_quiz_words(
     library_ids: list[int],
     word_ids: list[int],
     count: int,
+    min_wrong_count: int = 0,
 ) -> list[Word]:
     stmt = _eligible_words_stmt(
         profile_id=profile_id,
         library_ids=library_ids,
         word_ids=word_ids,
+        min_wrong_count=min_wrong_count,
     ).options(selectinload(Word.progress), selectinload(Word.library_words))
     words = list(db.scalars(stmt).unique().all())
     if not words:
@@ -90,11 +92,13 @@ def count_available_quiz_words(
     profile_id: int,
     library_ids: list[int],
     word_ids: list[int],
+    min_wrong_count: int = 0,
 ) -> int:
     eligible = _eligible_words_stmt(
         profile_id=profile_id,
         library_ids=library_ids,
         word_ids=word_ids,
+        min_wrong_count=min_wrong_count,
     ).with_only_columns(Word.id)
     return int(db.scalar(select(func.count()).select_from(eligible.subquery())) or 0)
 
@@ -104,6 +108,7 @@ def _eligible_words_stmt(
     profile_id: int,
     library_ids: list[int],
     word_ids: list[int],
+    min_wrong_count: int = 0,
 ):
     stmt = (
         select(Word)
@@ -117,6 +122,14 @@ def _eligible_words_stmt(
         )
     if word_ids:
         stmt = stmt.where(Word.id.in_(word_ids))
+    if min_wrong_count > 0:
+        frequent_ids = (
+            select(ReviewEvent.word_id)
+            .where(ReviewEvent.profile_id == profile_id, ReviewEvent.rating == "unknown")
+            .group_by(ReviewEvent.word_id)
+            .having(func.count() >= min_wrong_count)
+        )
+        stmt = stmt.where(Word.id.in_(frequent_ids))
     return stmt
 
 

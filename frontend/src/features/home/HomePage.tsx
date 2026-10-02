@@ -10,6 +10,7 @@ import {
   ChevronDown,
   PenLine,
   Sparkles,
+  Target,
 } from "lucide-react";
 
 export function HomePage() {
@@ -17,6 +18,8 @@ export function HomePage() {
   const profileId = Number(raw);
   const navigate = useNavigate();
   const [selectedLibs, setSelectedLibs] = useState<number[]>([]);
+  // 高频错题与按词库二选一：选中时只练长期错得多的词
+  const [frequentMistakes, setFrequentMistakes] = useState(false);
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const initializedProfileId = useRef<number | null>(null);
 
@@ -26,10 +29,21 @@ export function HomePage() {
     enabled: Number.isFinite(profileId),
   });
 
+  const availableLibraries = data?.libraries.filter((library) => library.word_count > 0) ?? [];
+  const hasAvailableLibraries = availableLibraries.length > 0;
+  const hasScope = frequentMistakes || selectedLibs.length > 0;
+  const quizScope = frequentMistakes
+    ? { frequent_mistakes: true }
+    : { library_ids: selectedLibs };
   const preview = useQuery({
-    queryKey: ["quiz-preview", profileId, selectedLibs.join(",")],
-    queryFn: () => api.quizPreview(profileId, selectedLibs, 10),
-    enabled: Number.isFinite(profileId) && selectedLibs.length > 0,
+    queryKey: [
+      "quiz-preview",
+      profileId,
+      frequentMistakes ? "frequent" : selectedLibs.join(","),
+      data?.daily_quiz_count,
+    ],
+    queryFn: () => api.quizPreview(profileId, quizScope),
+    enabled: Number.isFinite(profileId) && Boolean(data) && hasScope,
   });
 
   useEffect(() => {
@@ -40,24 +54,36 @@ export function HomePage() {
   }, [data?.libraries, profileId]);
 
   function toggleLib(id: number) {
+    setFrequentMistakes(false);
     setSelectedLibs((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   }
 
+  function toggleFrequentMistakes() {
+    // 关掉高频错题时回到全部可学词库，避免范围突然变空
+    if (frequentMistakes && selectedLibs.length === 0) {
+      setSelectedLibs(availableLibraries.map((library) => library.id));
+    }
+    setFrequentMistakes(!frequentMistakes);
+  }
+
   const challengeCount = preview.data?.challenge_count;
   const estimatedMinutes = Math.max(1, Math.ceil((challengeCount ?? 0) * 0.45));
-  const isPreparing = selectedLibs.length > 0 && preview.isLoading;
+  const isPreparing = hasScope && preview.isLoading;
   const previewFailed = Boolean(preview.error);
-  const availableLibraries = data?.libraries.filter((library) => library.word_count > 0) ?? [];
-  const hasAvailableLibraries = availableLibraries.length > 0;
+  const mistakeThreshold = data?.frequent_mistake_threshold ?? 2;
+  const frequentWordCount = data?.frequent_mistake_words ?? 0;
+  const countLabel = previewFailed ? "题数待定" : `${challengeCount ?? "…"} 词`;
   const scopeSummary = !hasAvailableLibraries
     ? "暂无可学词库"
+    : frequentMistakes
+      ? `高频错题 · ${countLabel}`
     : selectedLibs.length === 0
       ? "还没选择挑战范围"
       : selectedLibs.length === availableLibraries.length
-        ? `全部可学词库 · ${previewFailed ? "题数待定" : `${challengeCount ?? "…"} 词`}`
-        : `已选 ${selectedLibs.length} 个词库 · ${previewFailed ? "题数待定" : `${challengeCount ?? "…"} 词`}`;
+        ? `全部可学词库 · ${countLabel}`
+        : `已选 ${selectedLibs.length} 个词库 · ${countLabel}`;
 
   return (
     <div className="stack">
@@ -84,7 +110,7 @@ export function HomePage() {
               ? "需要重试"
               : !hasAvailableLibraries
                 ? "等待新词"
-              : selectedLibs.length === 0
+              : !hasScope
                 ? "未选范围"
               : isPreparing
               ? "正在准备"
@@ -102,8 +128,12 @@ export function HomePage() {
                 ? "题数暂时没有准备好，学习内容不会丢失。"
                 : !hasAvailableLibraries
                   ? "词库还是空的，请家长先放入几个新词。"
-                : selectedLibs.length === 0
+                : !hasScope
                   ? "还没有选择挑战范围，请先勾选至少一个词库。"
+                : frequentMistakes && (challengeCount ?? 0) > 0
+                  ? `专练 ${challengeCount} 个错过 ${mistakeThreshold} 次以上的词，把老对手一个个拿下。`
+                : frequentMistakes
+                  ? `目前没有错过 ${mistakeThreshold} 次以上的词，换回词库练习吧。`
                 : (challengeCount ?? 0) > 0
                 ? `${challengeCount} 个词，完成就为词芽浇了一次水。`
                 : "词库还是空的，请家长先放入几个新词。"}
@@ -142,14 +172,29 @@ export function HomePage() {
           {showLibraryPicker ? (
             <fieldset id="challenge-library-picker" className="library-picker">
               <legend className="visually-hidden">选择挑战词库</legend>
+              <label
+                className={`checkbox-row scope-frequent${frequentWordCount === 0 ? " is-disabled" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={frequentMistakes}
+                  disabled={frequentWordCount === 0 && !frequentMistakes}
+                  onChange={toggleFrequentMistakes}
+                />
+                <span className="grow scope-frequent__copy">
+                  <span><Target size={15} aria-hidden="true" />高频错题</span>
+                  <small>错过 {mistakeThreshold} 次以上，单独专练</small>
+                </span>
+                <span>{frequentWordCount} 词</span>
+              </label>
               {(data?.libraries ?? []).map((lib) => (
                 <label
                   key={lib.id}
-                  className={`checkbox-row${lib.word_count === 0 ? " is-disabled" : ""}`}
+                  className={`checkbox-row${lib.word_count === 0 ? " is-disabled" : ""}${frequentMistakes ? " is-inactive" : ""}`}
                 >
                   <input
                     type="checkbox"
-                    checked={selectedLibs.includes(lib.id)}
+                    checked={!frequentMistakes && selectedLibs.includes(lib.id)}
                     disabled={lib.word_count === 0}
                     onChange={() => toggleLib(lib.id)}
                   />
@@ -182,12 +227,14 @@ export function HomePage() {
           disabled={
             isPreparing
             || previewFailed
-            || selectedLibs.length === 0
+            || !hasScope
             || challengeCount === 0
           }
           onClick={() =>
             navigate(`/app/${profileId}/quiz`, {
-              state: { libraryIds: selectedLibs },
+              state: frequentMistakes
+                ? { frequentMistakes: true }
+                : { libraryIds: selectedLibs },
             })
           }
         >
@@ -198,10 +245,14 @@ export function HomePage() {
               : !hasAvailableLibraries
                 ? "先请家长录入单词"
               : (challengeCount ?? 0) > 0
-              ? `开始 ${challengeCount} 词挑战`
-              : selectedLibs.length === 0
+              ? frequentMistakes
+                ? `开始 ${challengeCount} 个错题专练`
+                : `开始 ${challengeCount} 词挑战`
+              : !hasScope
                 ? "请先选择挑战范围"
-                : "先请家长录入单词"}
+                : frequentMistakes
+                  ? "暂时没有高频错题"
+                  : "先请家长录入单词"}
           <ArrowRight size={18} aria-hidden="true" />
         </button>
           </section>

@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from backend.app.api.deps import ensure_libraries_belong, get_profile_or_404, get_word_for_profile
+from sqlalchemy.orm import Session
+
+from backend.app.api.deps import (
+    daily_quiz_count,
+    ensure_libraries_belong,
+    get_profile_or_404,
+    get_word_for_profile,
+)
 from backend.app.auth import AuthDep, DbDep
 from backend.app.models import ReviewEvent
 from backend.app.schemas import (
+    FREQUENT_MISTAKE_THRESHOLD,
     QuizRateRequest,
     QuizRateResponse,
     QuizPreviewResponse,
@@ -24,6 +32,19 @@ from backend.app.services.quiz import (
 router = APIRouter(prefix="/profiles/{profile_id}/quiz", tags=["quiz"])
 
 
+def _resolve_count(db: Session, profile_id: int, body: QuizStartRequest) -> int:
+    if body.count is not None:
+        return body.count
+    if body.word_ids:
+        # 指定词重练时把这些词都练到，不被每日题量截断
+        return len(body.word_ids)
+    return daily_quiz_count(db, profile_id)
+
+
+def _min_wrong_count(body: QuizStartRequest) -> int:
+    return FREQUENT_MISTAKE_THRESHOLD if body.frequent_mistakes else 0
+
+
 @router.post("/preview", response_model=QuizPreviewResponse)
 def preview_quiz(
     profile_id: int,
@@ -39,10 +60,11 @@ def preview_quiz(
         profile_id=profile_id,
         library_ids=body.library_ids,
         word_ids=body.word_ids,
+        min_wrong_count=_min_wrong_count(body),
     )
     return QuizPreviewResponse(
         available_count=available_count,
-        challenge_count=min(body.count, available_count),
+        challenge_count=min(_resolve_count(db, profile_id, body), available_count),
     )
 
 
@@ -62,7 +84,8 @@ def start_quiz(
         profile_id=profile_id,
         library_ids=library_ids,
         word_ids=body.word_ids,
-        count=body.count,
+        count=_resolve_count(db, profile_id, body),
+        min_wrong_count=_min_wrong_count(body),
     )
     meaning_pool = collect_meaning_pool(db, profile_id=profile_id)
     payload = [

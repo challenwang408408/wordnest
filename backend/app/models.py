@@ -158,3 +158,20 @@ class ReviewEvent(Base):
     reviewed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ProfileSettings(Base):
+    """家长按孩子配置的学习设置；没有记录时使用默认值。"""
+
+    __tablename__ = "profile_settings"
+
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("profiles.id", ondelete="CASCADE"), primary_key=True
+    )
+    daily_quiz_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

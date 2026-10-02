@@ -6,10 +6,16 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter
 from sqlalchemy import func, select
 
-from backend.app.api.deps import get_profile_or_404, library_to_out
+from backend.app.api.deps import daily_quiz_count, get_profile_or_404, library_to_out
 from backend.app.auth import AuthDep, DbDep, SettingsDep
 from backend.app.models import Library, ReviewEvent, Word, WordProgress
-from backend.app.schemas import DashboardOut, ProfileOut, WeakWordOut
+from backend.app.schemas import (
+    FREQUENT_MISTAKE_THRESHOLD,
+    DashboardOut,
+    ProfileOut,
+    WeakWordOut,
+)
+from backend.app.services.quiz import count_available_quiz_words
 
 router = APIRouter(prefix="/profiles/{profile_id}", tags=["dashboard"])
 
@@ -134,6 +140,16 @@ def dashboard(
     return DashboardOut(
         profile=ProfileOut.model_validate(profile),
         libraries=[library_to_out(db, lib) for lib in libraries],
+        daily_quiz_count=daily_quiz_count(db, profile_id),
+        frequent_mistake_threshold=FREQUENT_MISTAKE_THRESHOLD,
+        # 与高频错题出题同一口径：未掌握、长期累计答错达到阈值
+        frequent_mistake_words=count_available_quiz_words(
+            db,
+            profile_id=profile_id,
+            library_ids=[],
+            word_ids=[],
+            min_wrong_count=FREQUENT_MISTAKE_THRESHOLD,
+        ),
         total_words=int(total_words),
         due_words=int(due_words),
         mastered_words=int(mastered_words),

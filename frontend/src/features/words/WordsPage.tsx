@@ -6,6 +6,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { WordCard } from "../../components/WordCard";
 import { ChevronDown, Plus, Search, Volume2 } from "lucide-react";
 import { useSpeech } from "../../hooks/useSpeech";
+import type { WordSort } from "../../types";
 
 export function WordsPage() {
   const { profileId: raw } = useParams();
@@ -15,6 +16,7 @@ export function WordsPage() {
   const [q, setQ] = useState("");
   const [libraryId, setLibraryId] = useState<number | "">("");
   const [status, setStatus] = useState<string>("");
+  const [sort, setSort] = useState<WordSort>("recent");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editMeaning, setEditMeaning] = useState("");
@@ -34,12 +36,13 @@ export function WordsPage() {
   });
 
   const words = useQuery({
-    queryKey: ["words", profileId, q, libraryId, status],
+    queryKey: ["words", profileId, q, libraryId, status, sort],
     queryFn: () =>
       api.words(profileId, {
         q: q || undefined,
         library_id: libraryId === "" ? undefined : libraryId,
         status: status || undefined,
+        sort,
       }),
   });
 
@@ -160,6 +163,18 @@ export function WordsPage() {
               <option value="mastered">已掌握</option>
             </select>
           </label>
+          <label className="field word-sort-field" htmlFor="sort-filter">
+            <span>排序</span>
+            <select
+              id="sort-filter"
+              aria-label="单词排序"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as WordSort)}
+            >
+              <option value="recent">最近录入</option>
+              <option value="wrong_count">错误次数（多到少）</option>
+            </select>
+          </label>
         </div>
       </section>
 
@@ -207,8 +222,18 @@ export function WordsPage() {
                       <b>{word.meaning_zh}</b>{word.ipa ? ` · ${word.ipa}` : ""}
                     </span>
                   </span>
-                  <span className={word.is_mastered ? "status-pill is-mastered" : "status-pill"}>
-                    {word.is_mastered ? "已掌握" : "学习中"}
+                  <span className="word-list-badges">
+                    {word.wrong_count > 0 ? (
+                      <span
+                        className={word.wrong_count >= 2 ? "wrong-pill is-frequent" : "wrong-pill"}
+                        aria-label={`累计错 ${word.wrong_count} 次`}
+                      >
+                        错 {word.wrong_count}
+                      </span>
+                    ) : null}
+                    <span className={word.is_mastered ? "status-pill is-mastered" : "status-pill"}>
+                      {word.is_mastered ? "已掌握" : "学习中"}
+                    </span>
                   </span>
                   <span className="word-expand-icon" aria-hidden="true">
                     <ChevronDown size={20} />
@@ -235,7 +260,7 @@ export function WordsPage() {
                     exampleZh={word.example_zh}
                   />
                   <p className="word-progress-copy">
-                    熟悉度 {word.progress?.familiarity ?? 0} · 已练习 {word.progress?.review_count ?? 0} 次
+                    熟悉度 {word.progress?.familiarity ?? 0} · 已练习 {word.progress?.review_count ?? 0} 次 · 累计错 {word.wrong_count} 次
                   </p>
                   <div className="word-management-actions">
                     <button

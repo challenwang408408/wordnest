@@ -12,6 +12,11 @@ class OrmModel(BaseModel):
 
 Rating = Literal["unknown", "familiar", "known"]
 
+DAILY_QUIZ_COUNTS = (10, 20, 30, 40, 50)
+DEFAULT_DAILY_QUIZ_COUNT = 10
+# 长期累计答错达到这个次数，就算“高频错题”
+FREQUENT_MISTAKE_THRESHOLD = 2
+
 
 class LoginRequest(BaseModel):
     access_code: str = Field(min_length=1)
@@ -84,6 +89,7 @@ class WordOut(OrmModel):
     is_mastered: bool
     library_ids: list[int] = Field(default_factory=list)
     progress: WordProgressOut | None = None
+    wrong_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -196,7 +202,9 @@ class VoiceTranscriptionOut(BaseModel):
 class QuizStartRequest(BaseModel):
     library_ids: list[int] = Field(default_factory=list)
     word_ids: list[int] = Field(default_factory=list, max_length=50)
-    count: int = Field(default=10, ge=1, le=50)
+    # 不传时使用家长设置的每日题量；指定 word_ids 重练时按词数出题
+    count: int | None = Field(default=None, ge=1, le=50)
+    frequent_mistakes: bool = False
 
 
 class QuizWordOut(BaseModel):
@@ -243,9 +251,27 @@ class WeakWordOut(BaseModel):
     last_rating: str
 
 
+class ProfileSettingsOut(BaseModel):
+    daily_quiz_count: int
+
+
+class ProfileSettingsUpdate(BaseModel):
+    daily_quiz_count: int
+
+    @field_validator("daily_quiz_count")
+    @classmethod
+    def check_daily_quiz_count(cls, value: int) -> int:
+        if value not in DAILY_QUIZ_COUNTS:
+            raise ValueError("每日题量只能是 10、20、30、40 或 50")
+        return value
+
+
 class DashboardOut(BaseModel):
     profile: ProfileOut
     libraries: list[LibraryOut]
+    daily_quiz_count: int
+    frequent_mistake_threshold: int
+    frequent_mistake_words: int
     total_words: int
     due_words: int
     mastered_words: int

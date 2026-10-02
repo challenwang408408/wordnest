@@ -24,7 +24,7 @@
 
 ### 2.3 单词录入
 
-- 手工录入：支持一次输入多个英语单词或词组（换行 / 逗号分隔，兼容分号和制表符，最多 20 项，自动去重）。词组内部空格保留，连续空白归一为空格；例如 `take off` 始终作为一个条目补全与保存。调用 AI Builders `grok-4.5` 批量返回规范 JSON 数组，每项含标准拼写、一个核心中文释义、词性、IPA、美式音节分隔和简短例句。单词输入仍可用。
+- 手工录入：支持一次输入多个英语单词或词组（换行 / 逗号分隔，兼容分号和制表符，最多 20 项，自动去重）。词组内部空格保留，连续空白归一为空格；例如 `take off` 始终作为一个条目补全与保存。调用 AI Builders（模型由 `AI_ENRICH_MODEL` 配置）批量返回规范 JSON 数组，每项含标准拼写、一个核心中文释义、词性、IPA、美式音节分隔和简短例句。单词输入仍可用。
 - 语音录入：批量录词输入框提供话筒按钮，支持最多 60 秒短录音。停止后等待最终 `dataavailable` 再释放话筒轨道，录音物化为原始字节后只在内存中转发给 AI Builders，不落盘；识别固定提示为英文单词听写，后端再做英文字符过滤、小写化、去重与最多 20 个限制，按逗号分隔回填现有输入框。
 - 批量补全后进入确认列表：用户可勾选、展开改字段、选择目标词库，再统一保存；AI 漏掉的词以可编辑空草稿保留，不静默丢弃。
 - 拍照录入：手机相机或相册上传图片，后端仅在内存中处理，调用 AI Builders `kimi-k2.5` vision 提取适合小学生学习的英语候选词。
@@ -40,9 +40,11 @@
 
 ### 2.5 测试与记忆
 
-- 从当前孩子选中的词库生成认读测试，默认 10 题，不足则全部使用；首页预览与真正出题共用「按孩子隔离、未掌握、词库去重」口径。
+- 从当前孩子选中的词库生成认读测试，题量由家长在家长页按孩子设置，可选 10 / 20 / 30 / 40 / 50，默认 10，不足则全部使用；首页预览与真正出题共用「按孩子隔离、未掌握、词库去重」口径。指定 `word_ids` 重练时按词数出题，不受每日题量截断。
+- 首页挑战范围额外提供「高频错题」：长期累计答错达到 2 次的未掌握词，与按词库勾选二选一；没有符合条件的词时不可勾选。
 - 题型以“看到英文，知道中文并会读”为中心：先显示英文、音标和发音按钮，再从四个中文选项中选择，作答后才展示释义和例句。
-- 答对自动记为 `known`，答错记为 `unknown`；答对但属于猜中时，孩子可用“其实是蒙的”降级为 `familiar`。答对后仍明确点“下一个”，不自动跳题，保留纠偏时间。后端记录每次结果，更新熟悉度、连续答对、总测试次数、最近测试时间和下次复习时间。
+- 答对自动记为 `known`，答错记为 `unknown`；答对但属于猜中时，孩子可用“其实是蒙的”降级为 `familiar`。答对后仍明确点“下一个”，不自动跳题，保留纠偏时间。
+- 答错后进入单词细看卡：展示所选错误项、正确释义、词性和高亮单词的中英例句，并有 5 秒倒计时；倒计时结束前“下一个”禁用，结束后按钮变为“记住了，下一个”。页面在后台时计时随浏览器暂停，不会在无人观看时走完。后端记录每次结果，更新熟悉度、连续答对、总测试次数、最近测试时间和下次复习时间。
 - 随机算法优先抽取到期、低熟悉度和较久未测的词，仍保留少量随机性；同一轮不重复。
 - 答题过程进入专注模式，中途退出准确说明已提交和未提交数据；结果页列出需要再看的词，并可只针对这些 `word_id` 开始下一轮。
 - “已掌握”词默认不进入测试，但可在管理页重新启用或删除。
@@ -50,6 +52,7 @@
 ### 2.6 词库管理
 
 - 按关键词、子词库、学习状态筛选；请求失败与真正空词库、筛选无结果使用不同状态。
+- 支持排序：默认最近录入，可选“错误次数（多到少）”。每行显示长期累计答错次数（错 2 次及以上用醒目色），错误次数来自全部 `review_events` 中的 `unknown`，不限时间窗口。
 - 页头直接提供“录新词”入口。紧凑行的主体区域整块可展开，并保留独立发音按钮；支持编辑释义、音标、音节、例句和词库归属，支持标记已掌握、恢复测试、删除。
 - 删除单词和子词库使用产品内确认弹层，默认焦点在取消动作；所有状态变化刷新后保持。
 
@@ -62,7 +65,8 @@
 - `words`: `id`, `profile_id`, `normalized_spelling`, `spelling`, `meaning_zh`, `part_of_speech`, `ipa`, `syllables`, `example_en`, `example_zh`, `is_mastered`, timestamps；`profile_id + normalized_spelling` 唯一。
 - `library_words`: `library_id + word_id` 复合主键，外键级联。
 - `word_progress`: `profile_id + word_id` 唯一，含 `familiarity`, `correct_streak`, `review_count`, `last_rating`, `last_reviewed_at`, `next_review_at`。
-- `review_events`: `id`, `profile_id`, `word_id`, `rating`, `reviewed_at`，用于长期记录。
+- `review_events`: `id`, `profile_id`, `word_id`, `rating`, `reviewed_at`，用于长期记录；单词错误次数由此按 `unknown` 计数派生，不另存冗余列。
+- `profile_settings`: `profile_id`（主键，外键级联）, `daily_quiz_count`, `updated_at`；无记录时使用默认值。由 `create_all` 自动建表，旧库无需迁移。
 
 所有跨表写入使用事务。种子逻辑幂等创建哥哥、妹妹和各自默认词库。
 
@@ -84,7 +88,10 @@
 - `POST /profiles/{profile_id}/quiz/preview`
 - `POST /profiles/{profile_id}/quiz/start`
 - `POST /profiles/{profile_id}/quiz/{word_id}/rate`
-- `GET /profiles/{profile_id}/dashboard`
+- `GET /profiles/{profile_id}/dashboard`（含 `daily_quiz_count`、`frequent_mistake_threshold`、`frequent_mistake_words`）
+- `PATCH /profiles/{profile_id}/settings`（`daily_quiz_count` 仅接受 10/20/30/40/50）
+- `GET /profiles/{profile_id}/words` 支持 `sort=recent|wrong_count`，每个词返回 `wrong_count`
+- `quiz/preview` 与 `quiz/start` 的 `count` 可省略（按每日题量），支持 `frequent_mistakes: true`
 - `GET /healthz`
 
 会话中允许访问两个固定家庭角色，但所有资源必须验证 URL 中 profile 与资源真实归属一致。不得通过猜测 ID 跨角色读取或修改。
@@ -93,7 +100,7 @@
 
 API base：`https://space.ai-builders.com/backend/v1`，Token 仅从 `AI_BUILDER_TOKEN` 读取。
 
-- 手输 enrichment 模型：`grok-4.5`（单词与批量共用）。
+- 手输 enrichment 模型：由 `AI_ENRICH_MODEL` 配置（默认 `gemini-3-flash-preview`，单词与批量共用）。
 - 图片识别模型：`kimi-k2.5`，请求温度固定 `1.0`，图片以经过尺寸和大小限制的 data URL 发送。
 - 服务端设置超时、最大 5MB 图片、MIME 白名单和结构化响应校验。
 - 短语音使用 `/v1/audio/transcriptions`，固定 `language=en` 与英文词表听写 prompt；前端以带音频 MIME 的原始字节请求规避 iOS WKWebView 的空 multipart 文件兼容问题，后端暂时兼容旧版 multipart 客户端。最大 8MB，使用音频 MIME 白名单，响应只暴露规范单词、逗号分隔文本和 `request_id`。
