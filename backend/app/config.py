@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
     app_env: str = Field(default="development", alias="APP_ENV")
     ai_timeout_seconds: float = Field(default=60.0, alias="AI_TIMEOUT_SECONDS")
+    ai_enrich_model: str = Field(
+        default="gemini-3-flash-preview",
+        alias="AI_ENRICH_MODEL",
+    )
     ai_base_url: str = Field(
         default="https://space.ai-builders.com/backend/v1",
         alias="AI_BASE_URL",

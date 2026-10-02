@@ -158,7 +158,7 @@ class HttpAIBuilderClient:
     def enrich_word(self, spelling: str) -> EnrichResult:
         try:
             completion = self.client.chat.completions.create(
-                model="grok-4.5",
+                model=self.settings.ai_enrich_model,
                 messages=[
                     {"role": "system", "content": ENRICH_SYSTEM},
                     {"role": "user", "content": spelling},
@@ -191,7 +191,7 @@ class HttpAIBuilderClient:
             return [self.enrich_word(spellings[0])]
         try:
             completion = self.client.chat.completions.create(
-                model="grok-4.5",
+                model=self.settings.ai_enrich_model,
                 messages=[
                     {"role": "system", "content": ENRICH_BATCH_SYSTEM},
                     {
