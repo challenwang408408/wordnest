@@ -624,6 +624,19 @@ button.syllable-track {
   gap: 12px;
 }
 
+.word-pagination,
+.word-pagination > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.word-pagination p {
+  margin: 0;
+}
+
 .word-list-item {
   overflow: hidden;
   box-shadow: var(--shadow-soft);

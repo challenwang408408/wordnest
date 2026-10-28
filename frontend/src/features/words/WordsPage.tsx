@@ -8,6 +8,8 @@ import { ChevronDown, Plus, Search, Volume2 } from "lucide-react";
 import { useSpeech } from "../../hooks/useSpeech";
 import type { WordSort } from "../../types";
 
+const WORDS_PER_PAGE = 50;
+
 export function WordsPage() {
   const { profileId: raw } = useParams();
   const profileId = Number(raw);
@@ -17,6 +19,7 @@ export function WordsPage() {
   const [libraryId, setLibraryId] = useState<number | "">("");
   const [status, setStatus] = useState<string>("");
   const [sort, setSort] = useState<WordSort>("recent");
+  const [pagination, setPagination] = useState({ scope: "", page: 1 });
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editMeaning, setEditMeaning] = useState("");
@@ -45,6 +48,29 @@ export function WordsPage() {
         sort,
       }),
   });
+
+  // 仍对完整词库搜索、排序，只限制同时挂载的词卡数量。
+  const scope = JSON.stringify([profileId, q, libraryId, status, sort]);
+  const totalWords = words.data?.length ?? 0;
+  const pageCount = Math.max(1, Math.ceil(totalWords / WORDS_PER_PAGE));
+  const currentPage = pagination.scope === scope ? Math.min(pagination.page, pageCount) : 1;
+  const visibleWords = (words.data ?? []).slice(
+    (currentPage - 1) * WORDS_PER_PAGE, currentPage * WORDS_PER_PAGE,
+  );
+
+  function changePage(page: number) {
+    setPagination({ scope, page });
+    setExpandedId(null);
+    setEditingId(null);
+    setEnrichError(null);
+  }
+
+  function resetPagination() {
+    setPagination({ scope: "", page: 1 });
+    setExpandedId(null);
+    setEditingId(null);
+    setEnrichError(null);
+  }
 
   const update = useMutation({
     mutationFn: (payload: {
@@ -127,7 +153,10 @@ export function WordsPage() {
           <input
             id="q"
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => {
+              setQ(e.target.value);
+              resetPagination();
+            }}
             placeholder="拼写或中文"
           />
         </div>
@@ -138,9 +167,10 @@ export function WordsPage() {
               id="library-filter"
               aria-label="按词库筛选"
               value={libraryId}
-              onChange={(e) =>
-                setLibraryId(e.target.value ? Number(e.target.value) : "")
-              }
+              onChange={(e) => {
+                setLibraryId(e.target.value ? Number(e.target.value) : "");
+                resetPagination();
+              }}
             >
               <option value="">全部词库</option>
               {(libs.data ?? []).map((lib) => (
@@ -156,7 +186,10 @@ export function WordsPage() {
               id="status-filter"
               aria-label="按学习状态筛选"
               value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                resetPagination();
+              }}
             >
               <option value="">全部状态</option>
               <option value="learning">学习中</option>
@@ -169,7 +202,10 @@ export function WordsPage() {
               id="sort-filter"
               aria-label="单词排序"
               value={sort}
-              onChange={(e) => setSort(e.target.value as WordSort)}
+              onChange={(e) => {
+                setSort(e.target.value as WordSort);
+                resetPagination();
+              }}
             >
               <option value="recent">最近录入</option>
               <option value="wrong_count">错误次数（多到少）</option>
@@ -197,8 +233,20 @@ export function WordsPage() {
         </div>
       ) : null}
 
+      {totalWords > WORDS_PER_PAGE ? (
+        <nav className="word-pagination" aria-label="词库分页">
+          <p className="muted" aria-live="polite">共 {totalWords} 个词条 · 第 {currentPage} / {pageCount} 页</p>
+          <div>
+            <button type="button" className="btn btn-ghost" disabled={currentPage === 1}
+              onClick={() => changePage(currentPage - 1)}>上一页</button>
+            <button type="button" className="btn btn-ghost" disabled={currentPage === pageCount}
+              onClick={() => changePage(currentPage + 1)}>下一页</button>
+          </div>
+        </nav>
+      ) : null}
+
       <div className="word-list">
-        {(words.data ?? []).map((word) => {
+        {visibleWords.map((word) => {
           const expanded = expandedId === word.id;
           const detailId = `word-details-${word.id}`;
           return (

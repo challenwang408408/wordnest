@@ -358,6 +358,109 @@ describe("LoginPage", () => {
 });
 
 describe("HomePage", () => {
+  const challengeLibraries = [
+    { id: 10, profile_id: 1, name: "日常阅读", is_default: true, word_count: 500, due_count: 500 },
+    { id: 20, profile_id: 1, name: "小学单词", is_default: false, word_count: 1587, due_count: 1587 },
+    { id: 30, profile_id: 1, name: "KET词库", is_default: false, word_count: 1986, due_count: 1986 },
+  ];
+
+  it("previews and starts only the default daily reading library", async () => {
+    const user = userEvent.setup();
+    dashboardMock.mockResolvedValue({
+      ...(await dashboardMock()),
+      libraries: challengeLibraries,
+    });
+    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    expect(await screen.findByText("日常阅读 · 4 词")).toBeInTheDocument();
+    expect(quizPreviewMock).toHaveBeenLastCalledWith(1, { library_ids: [10] });
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    expect(screen.getByRole("checkbox", { name: /日常阅读/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /KET词库/ })).not.toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "开始 4 词挑战" }));
+    expect(await screen.findByLabelText("测试路由状态")).toHaveTextContent(
+      JSON.stringify({ libraryIds: [10] }),
+    );
+  });
+
+  it("names a single primary library and keeps its scope through a frequent-mistake detour", async () => {
+    const user = userEvent.setup();
+    dashboardMock.mockResolvedValue({
+      ...(await dashboardMock()),
+      libraries: challengeLibraries,
+      daily_quiz_count: 30,
+    });
+    quizPreviewMock.mockImplementation((_profileId: number, scope: { frequent_mistakes?: boolean }) =>
+      Promise.resolve(scope.frequent_mistakes
+        ? { available_count: 3, challenge_count: 3 }
+        : { available_count: 1587, challenge_count: 30 }),
+    );
+    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    expect(await screen.findByText("日常阅读 · 30 词")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: /日常阅读/ }));
+    await user.click(screen.getByRole("checkbox", { name: /小学单词/ }));
+    await waitFor(() => {
+      expect(quizPreviewMock).toHaveBeenLastCalledWith(1, { library_ids: [20] });
+    });
+    expect(await screen.findByText("小学单词 · 30 词")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).not.toBeChecked();
+    await waitFor(() => {
+      expect(quizPreviewMock).toHaveBeenLastCalledWith(1, { frequent_mistakes: true });
+    });
+    expect(await screen.findByText("高频错题 · 3 词")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /日常阅读/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /KET/ })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    expect(screen.getByText("小学单词 · 30 词")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "开始 30 词挑战" }));
+    expect(await screen.findByLabelText("测试路由状态")).toHaveTextContent(
+      JSON.stringify({ libraryIds: [20] }),
+    );
+  });
+
+  it("keeps a manually selected primary and KET range after the dashboard refreshes", async () => {
+    const user = userEvent.setup();
+    const dashboard = { ...(await dashboardMock()), libraries: challengeLibraries };
+    dashboardMock.mockResolvedValue(dashboard);
+    const { client } = renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    await screen.findByText("日常阅读 · 4 词");
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    await user.click(screen.getByRole("checkbox", { name: /日常阅读/ }));
+    await user.click(screen.getByRole("checkbox", { name: /小学单词/ }));
+    await user.click(screen.getByRole("checkbox", { name: /KET词库/ }));
+    await waitFor(() => {
+      expect(quizPreviewMock).toHaveBeenLastCalledWith(1, { library_ids: [20, 30] });
+    });
+
+    dashboardMock.mockResolvedValue({
+      ...dashboard,
+      libraries: challengeLibraries.map((library) => ({ ...library, word_count: library.word_count + 1 })),
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["dashboard", 1] });
+    });
+
+    expect(await screen.findByText("501 词")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /日常阅读/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /KET词库/ })).toBeChecked();
+    expect(screen.getByText("已选 2 个词库 · 4 词")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "开始 4 词挑战" }));
+    expect(await screen.findByLabelText("测试路由状态")).toHaveTextContent(
+      JSON.stringify({ libraryIds: [20, 30] }),
+    );
+  });
+
   it("makes the real-sized daily challenge the primary task", async () => {
     renderApp("/app/1");
 
@@ -404,8 +507,12 @@ describe("HomePage", () => {
     );
   });
 
-  it("goes back to all libraries when frequent mistakes is turned off", async () => {
+  it("returns an empty selection to only the default library when frequent mistakes is turned off", async () => {
     const user = userEvent.setup();
+    dashboardMock.mockResolvedValue({
+      ...(await dashboardMock()),
+      libraries: challengeLibraries,
+    });
     renderRoute(<HomePage />, "/app/1", "/app/:profileId");
 
     await screen.findByRole("button", { name: "开始 4 词挑战" });
@@ -414,6 +521,39 @@ describe("HomePage", () => {
     await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
     await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
     expect(screen.getByRole("checkbox", { name: /日常阅读/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /KET词库/ })).not.toBeChecked();
+    await waitFor(() => {
+      expect(quizPreviewMock).toHaveBeenLastCalledWith(1, { library_ids: [10] });
+    });
+  });
+
+  it("does not fall back to other libraries when the default library is empty", async () => {
+    const user = userEvent.setup();
+    dashboardMock.mockResolvedValue({
+      ...(await dashboardMock()),
+      libraries: challengeLibraries.map((library) => (
+        library.is_default ? { ...library, word_count: 0, due_count: 0 } : library
+      )),
+    });
+    renderRoute(<HomePage />, "/app/1", "/app/:profileId");
+
+    expect(await screen.findByText("还没选择挑战范围")).toBeInTheDocument();
+    expect(quizPreviewMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /调整挑战范围/ }));
+    expect(screen.getByRole("checkbox", { name: /日常阅读/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /KET词库/ })).not.toBeChecked();
+
+    await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
+    await waitFor(() => {
+      expect(quizPreviewMock).toHaveBeenLastCalledWith(1, { frequent_mistakes: true });
+    });
+    await user.click(screen.getByRole("checkbox", { name: /高频错题/ }));
+    expect(screen.getByRole("checkbox", { name: /小学单词/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /KET词库/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "请先选择挑战范围" })).toBeDisabled();
+    expect(quizPreviewMock.mock.calls.every(([, scope]) => scope.frequent_mistakes === true)).toBe(true);
   });
 
   it("disables frequent mistakes when there are none yet", async () => {
@@ -499,7 +639,7 @@ describe("HomePage", () => {
     const scopeToggle = await screen.findByRole("button", { name: /调整挑战范围/ });
     expect(scopeToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("checkbox", { name: /绘本/ })).not.toBeInTheDocument();
-    expect(await screen.findByText("全部可学词库 · 4 词")).toBeInTheDocument();
+    expect(await screen.findByText("日常阅读 · 4 词")).toBeInTheDocument();
 
     await user.click(scopeToggle);
     expect(scopeToggle).toHaveAttribute("aria-expanded", "true");

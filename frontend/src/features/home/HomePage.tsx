@@ -48,7 +48,9 @@ export function HomePage() {
 
   useEffect(() => {
     if (data?.libraries && initializedProfileId.current !== profileId) {
-      setSelectedLibs(data.libraries.filter((library) => library.word_count > 0).map((library) => library.id));
+      setSelectedLibs(data.libraries
+        .filter((library) => library.is_default && library.word_count > 0)
+        .map((library) => library.id));
       initializedProfileId.current = profileId;
     }
   }, [data?.libraries, profileId]);
@@ -61,9 +63,11 @@ export function HomePage() {
   }
 
   function toggleFrequentMistakes() {
-    // 关掉高频错题时回到全部可学词库，避免范围突然变空
+    // 没有保留的手选范围时，只回到有词的默认词库
     if (frequentMistakes && selectedLibs.length === 0) {
-      setSelectedLibs(availableLibraries.map((library) => library.id));
+      setSelectedLibs(availableLibraries
+        .filter((library) => library.is_default)
+        .map((library) => library.id));
     }
     setFrequentMistakes(!frequentMistakes);
   }
@@ -75,12 +79,17 @@ export function HomePage() {
   const mistakeThreshold = data?.frequent_mistake_threshold ?? 2;
   const frequentWordCount = data?.frequent_mistake_words ?? 0;
   const countLabel = previewFailed ? "题数待定" : `${challengeCount ?? "…"} 词`;
+  const singleLibrary = selectedLibs.length === 1
+    ? availableLibraries.find((library) => library.id === selectedLibs[0])
+    : undefined;
   const scopeSummary = !hasAvailableLibraries
     ? "暂无可学词库"
     : frequentMistakes
       ? `高频错题 · ${countLabel}`
     : selectedLibs.length === 0
       ? "还没选择挑战范围"
+      : singleLibrary
+        ? `${singleLibrary.name} · ${countLabel}`
       : selectedLibs.length === availableLibraries.length
         ? `全部可学词库 · ${countLabel}`
         : `已选 ${selectedLibs.length} 个词库 · ${countLabel}`;
